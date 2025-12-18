@@ -22,6 +22,9 @@ jobs:
       with:
         go-version: '1.25'
 
+    - name: Test
+      run: go test ./...
+
     - name: Build
       env:
         GOOS: ${{ matrix.goos }}
@@ -37,7 +40,7 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: warp-${{ matrix.goos }}-${{ matrix.goarch }}
-        path: warp-${{ matrix.goos }}-${{ matrix.goarch }}$(if [ "${{ matrix.goos }}" = "windows" ]; then echo ".exe"; fi)
+        path: warp-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.goos == 'windows' && '.exe' || '' }}
 
   release:
     needs: build
