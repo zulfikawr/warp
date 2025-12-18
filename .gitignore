@@ -1,0 +1,113 @@
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+/warp
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool
+*.out
+coverage.txt
+coverage.html
+
+# Go workspace file
+go.work
+
+# Dependency directories
+vendor/
+
+# IDEs and editors
+.idea/
+.vscode/
+.idx/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Temporary files
+*.tmp
+*.temp
+tmp/
+temp/
+
+# Test artifacts
+test-data/
+**/warp-src-*
+**/warp-host-*
+**/warp-resume-*
+**/warp-dir-*
+**/warp-fname-*
+**/warp-concurrent-*
+**/warp-perf-*
+**/warp-out-*
+**/warp-*-dest/
+
+# Performance test results
+perf/
+benchmarks/
+*.bench
+*.prof
+*.pprof
+
+# Build artifacts
+dist/
+build/
+bin/
+
+# Logs
+*.log
+logs/
+
+# Upload directories (for testing)
+uploads/
+downloads/
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Linux
+*~
+.directory
+.Trash-*
+
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Backup files
+*.bak
+*.backup
+*-backup
+
+# Compressed files (test artifacts)
+*.zip
+*.tar.gz
+*.tgz
+*.tar
+
+# Debug files
+debug
+debug.test
+__debug_bin
+
+# OS generated files
+.fseventsd
+.Spotlight-V100
+.Trashes

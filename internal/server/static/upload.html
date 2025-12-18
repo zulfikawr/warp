@@ -1,0 +1,897 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>~/warp/drop</title>
+    <style>
+      :root {
+        /* ANSI Color Map */
+        --bg: #000000;
+        --c-reset: #e5e5e5;
+        --c-bold: #ffffff;
+        --c-dim: #555555;
+        --c-green: #00ff41;
+        --c-yellow: #f1c40f;
+        --c-magenta: #ff00ff;
+        --c-red: #ff5555;
+      }
+
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      body {
+        font-family: "Courier New", Courier, "Lucida Console", monospace;
+        background: var(--bg);
+        color: var(--c-reset);
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 1rem;
+        line-height: 1.4;
+      }
+
+      .terminal {
+        width: 100%;
+        max-width: 600px;
+      }
+
+      /* Typography & Layout */
+      h1 {
+        font-size: 1rem;
+        color: var(--c-magenta);
+        font-weight: normal;
+        margin-bottom: 1rem;
+      }
+
+      .prompt::before {
+        content: "user@warp:~$ ";
+        color: var(--c-green);
+      }
+
+      .subtitle {
+        color: var(--c-dim);
+        font-size: 0.85rem;
+        margin-bottom: 1.5rem;
+        display: block;
+      }
+
+      /* Upload Zone - styled as a defined memory block */
+      .upload-zone {
+        border: 1px dashed var(--c-dim);
+        padding: 2rem 1rem;
+        text-align: center;
+        cursor: pointer;
+        margin-bottom: 1.5rem;
+        position: relative;
+        transition: all 0.1s;
+      }
+
+      .upload-zone:hover,
+      .upload-zone.dragover {
+        border-color: var(--c-green);
+        background: rgba(0, 255, 65, 0.05);
+      }
+
+      .upload-zone.dragover::after {
+        content: "[ DROP_INCOMING_DATA ]";
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        background: var(--bg);
+        color: var(--c-green);
+        padding: 0.5rem;
+      }
+
+      .icon-ascii {
+        display: block;
+        color: var(--c-dim);
+        margin-bottom: 1rem;
+        white-space: pre;
+        font-size: 0.7rem;
+        line-height: 1;
+        font-weight: bold;
+      }
+
+      .upload-text {
+        color: var(--c-bold);
+        font-size: 0.9rem;
+      }
+
+      .upload-hint {
+        color: var(--c-dim);
+        font-size: 0.75rem;
+        margin-top: 0.5rem;
+      }
+
+      input[type="file"] {
+        display: none;
+      }
+
+      /* File List - Styled as `ls -l` output */
+      .file-list {
+        margin-bottom: 1.5rem;
+        border-top: 1px solid var(--c-dim);
+        padding-top: 1rem;
+      }
+
+      .file-item {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        margin-bottom: 1rem;
+        font-size: 0.85rem;
+      }
+
+      .file-header {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        width: 100%;
+        margin-bottom: 0.25rem;
+      }
+
+      .file-name {
+        color: var(--c-reset);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        flex: 1;
+        min-width: 0;
+      }
+
+      .file-size {
+        color: var(--c-dim);
+      }
+
+      .file-actions {
+        display: flex;
+        align-items: center;
+        gap: 0.25rem;
+        flex-shrink: 0;
+      }
+
+      .remove-btn {
+        background: none;
+        border: none;
+        color: var(--c-red);
+        cursor: pointer;
+        font-family: inherit;
+        font-size: 1rem;
+      }
+      .remove-btn:hover {
+        background: var(--c-red);
+        color: var(--bg);
+      }
+
+      .action-btn {
+        background: none;
+        border: none;
+        color: var(--c-magenta);
+        cursor: pointer;
+        font-family: inherit;
+        font-size: 1rem;
+      }
+      .action-btn:hover:not(:disabled) {
+        background: var(--c-magenta);
+        color: var(--bg);
+      }
+      .action-btn:disabled { color: var(--c-dim); border-color: var(--c-dim); }
+
+      /* Progress Bar - Blocky style */
+      .progress-container {
+        width: 100%;
+        height: 12px;
+        background: var(--c-dim);
+        margin-top: 2px;
+        position: relative;
+      }
+
+      .progress-bar {
+        height: 100%;
+        background: var(--c-green);
+        width: 0%;
+        transition: width 0.2s linear;
+      }
+
+      .speed-text {
+        color: var(--c-yellow);
+        font-size: 0.75rem;
+        margin-top: 4px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        width: 100%;
+      }
+      
+      .speed-text .rate-left {
+        color: var(--c-yellow);
+      }
+      
+      .speed-text .status-right {
+        color: var(--c-green);
+        text-align: right;
+      }
+      
+      /* WebSocket Status Indicator */
+      .ws-status {
+        display: inline-block;
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--c-dim);
+        margin-left: 0.5rem;
+        transition: background 0.3s;
+      }
+      
+      .ws-status.connected {
+        background: var(--c-green);
+        box-shadow: 0 0 8px var(--c-green);
+      }
+      
+      .ws-status.error {
+        background: var(--c-red);
+      }
+
+      /* Actions */
+      .btn {
+        width: 100%;
+        background: transparent;
+        color: var(--c-green);
+        border: 1px solid var(--c-green);
+        padding: 1rem;
+        font-family: inherit;
+        font-size: 1rem;
+        cursor: pointer;
+        text-transform: uppercase;
+        font-weight: bold;
+        letter-spacing: 1px;
+      }
+
+      .btn:hover:not(:disabled) {
+        background: var(--c-green);
+        color: var(--bg);
+      }
+
+      .btn:disabled {
+        border-color: var(--c-dim);
+        color: var(--c-dim);
+        cursor: not-allowed;
+      }
+
+      /* Footer */
+      .footer {
+        margin-top: 2rem;
+        border-top: 1px solid var(--c-dim);
+        padding-top: 0.5rem;
+        font-size: 0.75rem;
+        color: var(--c-dim);
+        display: flex;
+        justify-content: space-between;
+      }
+
+      /* Blinking Cursor Utility */
+      .cursor::after {
+        content: "█";
+        animation: blink 1s step-end infinite;
+        color: var(--c-green);
+        margin-left: 5px;
+      }
+      @keyframes blink {
+        50% {
+          opacity: 0;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="terminal">
+      <h1 class="prompt">./warp_drop --secure</h1>
+      <span class="subtitle"
+        >// Parallel chunk uploads with SHA256 verification & real-time progress</span
+      >
+
+      <form method="POST" enctype="multipart/form-data" id="uploadForm">
+        <div class="upload-zone" id="dropZone">
+          <div class="icon-ascii">| --+-- |</div>
+          <div class="upload-text">[ SELECT OR DRAG FILES ]</div>
+          <div class="upload-hint">>> awaiting input stream...</div>
+        </div>
+
+        <input type="file" name="file" id="fileInput" multiple required />
+
+        <div class="file-list" id="fileList"></div>
+
+        <button type="submit" class="btn" id="submitBtn" disabled>
+          [ INITIALIZE UPLOAD ]
+        </button>
+      </form>
+
+      <div class="footer">
+        <span>STATUS: IDLE<span class="ws-status" id="wsStatus" title="WebSocket Connection"></span></span>
+        <span class="cursor">_</span>
+      </div>
+    </div>
+
+    <script>
+      const dropZone = document.getElementById("dropZone");
+      const fileInput = document.getElementById("fileInput");
+      const fileList = document.getElementById("fileList");
+      const submitBtn = document.getElementById("submitBtn");
+      const footerStatus = document.querySelector(".footer span:first-child");
+      const cursorEl = document.querySelector(".cursor");
+      const wsStatusEl = document.getElementById("wsStatus");
+      let serverAlive = true;
+      let uploadInProgress = false;
+      let selectedFiles = [];
+      const uploads = {}; // per-file state
+      const manifestDefaults = { chunkSize: 2 * 1024 * 1024, maxConcurrent: 3 };
+      let manifestConfig = { ...manifestDefaults };
+      let ws = null; // WebSocket connection
+      let wsReconnectTimer = null;
+
+      // Interaction Logic
+      dropZone.addEventListener("click", () => fileInput.click());
+
+      fileInput.addEventListener("change", (e) => {
+        handleFiles(e.target.files);
+      });
+
+      ["dragenter", "dragover", "dragleave", "drop"].forEach((evt) => {
+        dropZone.addEventListener(evt, (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+        });
+      });
+
+      ["dragenter", "dragover"].forEach((evt) => {
+        dropZone.addEventListener(evt, () =>
+          dropZone.classList.add("dragover"),
+        );
+      });
+
+      ["dragleave", "drop"].forEach((evt) => {
+        dropZone.addEventListener(evt, () =>
+          dropZone.classList.remove("dragover"),
+        );
+      });
+
+      dropZone.addEventListener("drop", (e) => {
+        const files = e.dataTransfer.files;
+        handleFiles(files);
+      });
+
+      function handleFiles(files) {
+        selectedFiles = Array.from(files);
+        for (const key of Object.keys(uploads)) delete uploads[key];
+        updateFileList();
+        submitBtn.disabled = selectedFiles.length === 0;
+        if (selectedFiles.length > 0) {
+          footerStatus.textContent =
+            "STATUS: " + selectedFiles.length + " FILES STAGED";
+          footerStatus.style.color = "var(--c-bold)";
+        } else {
+          footerStatus.textContent = "STATUS: IDLE";
+          footerStatus.style.color = "var(--c-dim)";
+        }
+      }
+
+      function updateFileList() {
+        if (selectedFiles.length === 0) {
+          fileList.innerHTML = "";
+          return;
+        }
+        const items = [];
+        for (let i = 0; i < selectedFiles.length; i++) {
+          const f = selectedFiles[i];
+          items.push(
+            `<div class="file-item">
+        <div class="file-header">
+          <span class="file-name">./${escapeHtml(f.name)}</span>
+          <div class="file-actions">
+            <span class="file-size">${formatSize(f.size)}</span>
+            <button type="button" id="toggle-${i}" class="action-btn" onclick="toggleUpload(${i})">[>]</button>
+            <button type="button" class="remove-btn" onclick="cancelUpload(${i})">[x]</button>
+          </div>
+        </div>
+        <div class="progress-container">
+          <div id="bar-${i}" class="progress-bar"></div>
+        </div>
+        <span class="speed-text"><span id="rate-${i}" class="rate-left">--</span><span id="status-${i}" class="status-right">WAITING...</span></span>
+      </div>`,
+          );
+        }
+        fileList.innerHTML = items.join("");
+      }
+
+      function removeFile(idx) {
+        const st = uploads[idx];
+        if (st && st.xhrs) {
+          st.paused = true;
+          for (const xhr of st.xhrs.values()) xhr.abort();
+          st.xhrs.clear();
+        }
+        delete uploads[idx];
+        selectedFiles.splice(idx, 1);
+        const dt = new DataTransfer();
+        selectedFiles.forEach((file) => dt.items.add(file));
+        fileInput.files = dt.files;
+        updateFileList();
+        submitBtn.disabled = selectedFiles.length === 0;
+        if (selectedFiles.length === 0) {
+          footerStatus.textContent = "STATUS: IDLE";
+        }
+      }
+
+      function formatSize(bytes) {
+        if (bytes < 1024) return bytes + " B";
+        if (bytes < 1048576) return (bytes / 1024).toFixed(1) + " KB";
+        return (bytes / 1048576).toFixed(1) + " MB";
+      }
+
+      function escapeHtml(text) {
+        const div = document.createElement("div");
+        div.textContent = text;
+        return div.innerHTML;
+      }
+
+      function setStatusText(idx, text, color) {
+        const el = document.getElementById("status-" + idx);
+        if (!el) return;
+        el.textContent = text;
+        el.style.color = color || "var(--c-yellow)";
+      }
+
+      function setRate(idx, value) {
+        const el = document.getElementById("rate-" + idx);
+        if (!el) return;
+        if (typeof value === "number") {
+          el.textContent = value.toFixed(2) + " Mbps";
+        } else {
+          el.textContent = value || "--";
+        }
+      }
+
+      function updateRate(idx) {
+        const st = uploads[idx];
+        if (!st) return;
+        setRate(idx, st.speedMbps || 0);
+      }
+
+      function failUpload(idx, message) {
+        const st = uploads[idx];
+        if (!st) return;
+        st.paused = true;
+        st.running = false;
+        setToggleIcon(idx, false);
+        for (const xhr of st.xhrs.values()) xhr.abort();
+        st.xhrs.clear();
+        setStatusText(idx, message || "ERROR", "var(--c-red)");
+        setRate(idx, "--");
+        if (st.rejectDone) {
+          st.rejectDone(new Error(message || "upload failed"));
+          st.resolveDone = null;
+          st.rejectDone = null;
+        }
+      }
+
+      // Upload Logic
+      const form = document.getElementById("uploadForm");
+      form.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        uploadInProgress = true;
+        submitBtn.disabled = true;
+        submitBtn.textContent = "[ UPLOAD IN PROGRESS... ]";
+        footerStatus.textContent = "STATUS: UPLOADING...";
+        footerStatus.style.color = "var(--c-yellow)";
+        const uploadsToRun = [];
+        for (let i = 0; i < selectedFiles.length; i++) {
+          uploadsToRun.push(startUpload(i));
+        }
+        const results = await Promise.allSettled(uploadsToRun);
+        uploadInProgress = false;
+        const hasError = results.some((r) => r.status === "rejected");
+        if (hasError) {
+          submitBtn.textContent = "[ PROCESS FAILED ]";
+          footerStatus.textContent = "STATUS: ERROR";
+          footerStatus.style.color = "var(--c-red)";
+        } else {
+          submitBtn.textContent = "[ PROCESS COMPLETE ]";
+          footerStatus.textContent = "STATUS: DONE";
+          footerStatus.style.color = "var(--c-green)";
+        }
+      });
+
+      async function startUpload(idx) {
+        const file = selectedFiles[idx];
+        if (!file) return Promise.resolve();
+        if (!uploads[idx]) {
+          const chunkSize = manifestConfig.chunkSize || manifestDefaults.chunkSize;
+          const totalChunks = Math.max(1, Math.ceil(file.size / chunkSize));
+          const pending = [];
+          for (let c = 0; c < totalChunks; c++) pending.push(c);
+          let resolveDone = null;
+          let rejectDone = null;
+          const donePromise = new Promise((res, rej) => {
+            resolveDone = res;
+            rejectDone = rej;
+          });
+          uploads[idx] = {
+            paused: false,
+            running: false,
+            chunkSize,
+            maxConcurrent: manifestConfig.maxConcurrent || manifestDefaults.maxConcurrent,
+            pending,
+            inFlight: new Set(),
+            xhrs: new Map(),
+            completedBytes: 0,
+            total: file.size,
+            speedMbps: 0,
+            startTime: null, // Track overall upload start time
+            lastUpdateTime: null, // Track last speed calculation
+            lastCompletedBytes: 0, // Track bytes for speed calculation
+            donePromise,
+            resolveDone,
+            rejectDone,
+          };
+        }
+        const st = uploads[idx];
+        if (!st.resolveDone || !st.rejectDone) {
+          let resolveDone = null;
+          let rejectDone = null;
+          st.donePromise = new Promise((res, rej) => {
+            resolveDone = res;
+            rejectDone = rej;
+          });
+          st.resolveDone = resolveDone;
+          st.rejectDone = rejectDone;
+        }
+        if (st.running && !st.paused) return st.donePromise;
+        st.paused = false;
+        st.running = true;
+        st.startTime = performance.now(); // Record start time
+        st.lastUpdateTime = st.startTime;
+        st.lastCompletedBytes = 0;
+        setToggleIcon(idx, true);
+        setStatusText(idx, "STARTING...");
+        setRate(idx, st.speedMbps || "--");
+        scheduleChunks(idx);
+        return st.donePromise;
+      }
+
+      function pauseUpload(idx) {
+        const st = uploads[idx];
+        if (!st) return;
+        st.paused = true;
+        setToggleIcon(idx, false);
+        for (const xhr of st.xhrs.values()) {
+          xhr.abort();
+        }
+        st.xhrs.clear();
+        setStatusText(idx, "PAUSED", "var(--c-yellow)");
+      }
+
+      function toggleUpload(idx) {
+        const st = uploads[idx];
+        if (st && st.running && !st.paused) {
+          pauseUpload(idx);
+        } else {
+          startUpload(idx);
+        }
+      }
+
+      function setToggleIcon(idx, playing) {
+        const btn = document.getElementById("toggle-" + idx);
+        if (btn) btn.textContent = playing ? "[||]" : "[>]";
+      }
+
+      function scheduleChunks(idx) {
+        const file = selectedFiles[idx];
+        const st = uploads[idx];
+        if (!file || !st) return;
+        if (st.paused) return;
+
+        while (!st.paused && st.inFlight.size < st.maxConcurrent && st.pending.length > 0) {
+          const chunkId = st.pending.shift();
+          st.inFlight.add(chunkId);
+          const start = chunkId * st.chunkSize;
+          const end = Math.min(start + st.chunkSize, file.size);
+          const chunk = file.slice(start, end);
+          const xhr = sendChunk(idx, file, chunk, start, chunkId);
+          st.xhrs.set(chunkId, xhr);
+          xhr.promise
+            .then((result) => {
+              st.inFlight.delete(chunkId);
+              st.xhrs.delete(chunkId);
+              if (result && result.aborted) {
+                st.pending.unshift(chunkId);
+                return;
+              }
+              
+              // Update completed bytes
+              st.completedBytes += chunk.size;
+              
+              // Calculate overall upload speed based on total time and bytes
+              const now = performance.now();
+              const elapsedSeconds = (now - st.startTime) / 1000;
+              if (elapsedSeconds > 0) {
+                // Calculate instantaneous speed (last 500ms of data)
+                const timeSinceLastUpdate = (now - st.lastUpdateTime) / 1000;
+                if (timeSinceLastUpdate > 0.5) { // Update speed every 500ms
+                  const bytesSinceLastUpdate = st.completedBytes - st.lastCompletedBytes;
+                  const instantMbps = (bytesSinceLastUpdate * 8) / (timeSinceLastUpdate * 1_000_000);
+                  // Use exponential moving average for smooth display
+                  st.speedMbps = st.speedMbps > 0 ? st.speedMbps * 0.7 + instantMbps * 0.3 : instantMbps;
+                  st.lastUpdateTime = now;
+                  st.lastCompletedBytes = st.completedBytes;
+                  updateRate(idx);
+                }
+              }
+              
+              updateProgress(idx);
+              if (st.completedBytes >= file.size) {
+                finishUpload(idx);
+              } else {
+                scheduleChunks(idx);
+              }
+            })
+            .catch(() => {
+              st.inFlight.delete(chunkId);
+              st.xhrs.delete(chunkId);
+              st.pending.unshift(chunkId);
+              failUpload(idx, "ERROR");
+            });
+        }
+      }
+
+      function updateProgress(idx) {
+        const st = uploads[idx];
+        const file = selectedFiles[idx];
+        if (!st || !file) return;
+        const pct = Math.min(100, (st.completedBytes / file.size) * 100);
+        const bar = document.getElementById("bar-" + idx);
+        if (bar) bar.style.width = pct.toFixed(1) + "%";
+        setStatusText(idx, `UPLOADING... ${pct.toFixed(0)}%`);
+      }
+
+      function finishUpload(idx) {
+        setStatusText(idx, "UPLOAD_COMPLETE", "var(--c-green)");
+        updateRate(idx);
+        setToggleIcon(idx, false);
+        const st = uploads[idx];
+        if (st) {
+          st.running = false;
+          st.paused = false;
+          if (st.resolveDone) {
+            st.resolveDone();
+            st.resolveDone = null;
+            st.rejectDone = null;
+          }
+        }
+      }
+
+      function sendChunk(idx, file, chunk, offset, chunkId) {
+        const xhr = new XMLHttpRequest();
+        const startedAt = performance.now();
+        const st = uploads[idx];
+        // Generate or reuse session ID for this file
+        if (!st.sessionId) {
+          st.sessionId = generateSessionId(file);
+        }
+        const promise = new Promise((resolve, reject) => {
+          xhr.open("POST", window.location.pathname.replace(/\/$/, ""));
+          xhr.setRequestHeader("X-File-Name", encodeURIComponent(file.name));
+          xhr.setRequestHeader("X-Upload-Session", st.sessionId);
+          xhr.setRequestHeader("X-Upload-Offset", String(offset));
+          xhr.setRequestHeader("X-Upload-Total", String(file.size));
+          xhr.setRequestHeader("X-Chunk-Id", String(chunkId));
+          xhr.setRequestHeader("X-Chunk-Total", String(Math.ceil(file.size / (uploads[idx]?.chunkSize || manifestDefaults.chunkSize))));
+          xhr.onabort = function () {
+            resolve({ aborted: true });
+          };
+          xhr.onerror = function () {
+            reject(new Error("network error"));
+          };
+          xhr.onreadystatechange = function () {
+            if (xhr.readyState === XMLHttpRequest.DONE) {
+              if (xhr.status >= 200 && xhr.status < 300) {
+                resolve({ durationMs: performance.now() - startedAt, size: chunk.size });
+              } else {
+                reject(new Error("chunk failed"));
+              }
+            }
+          };
+          xhr.send(chunk);
+        });
+        xhr.promise = promise;
+        return xhr;
+      }
+      
+      function generateSessionId(file) {
+        // Generate a unique session ID based on file name, size, and timestamp
+        const data = file.name + file.size + Date.now() + Math.random();
+        let hash = 0;
+        for (let i = 0; i < data.length; i++) {
+          const char = data.charCodeAt(i);
+          hash = ((hash << 5) - hash) + char;
+          hash = hash & hash; // Convert to 32bit integer
+        }
+        return 'session_' + Math.abs(hash).toString(16) + '_' + Date.now().toString(36);
+      }
+
+      function cancelUpload(idx) {
+        const st = uploads[idx];
+        if (st) {
+          st.paused = true;
+          for (const xhr of st.xhrs.values()) xhr.abort();
+          st.xhrs.clear();
+          if (st.rejectDone) {
+            st.rejectDone(new Error("cancelled"));
+            st.resolveDone = null;
+            st.rejectDone = null;
+          }
+        }
+        removeFile(idx);
+      }
+      
+      // WebSocket for real-time progress updates
+      function connectWebSocket() {
+        if (ws && (ws.readyState === WebSocket.CONNECTING || ws.readyState === WebSocket.OPEN)) {
+          return;
+        }
+        
+        const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+        const wsUrl = `${protocol}//${window.location.host}/ws/progress`;
+        
+        try {
+          ws = new WebSocket(wsUrl);
+          
+          ws.onopen = () => {
+            console.log("WebSocket connected");
+            if (wsStatusEl) wsStatusEl.className = "ws-status connected";
+            if (wsReconnectTimer) {
+              clearTimeout(wsReconnectTimer);
+              wsReconnectTimer = null;
+            }
+          };
+          
+          ws.onmessage = (event) => {
+            try {
+              const data = JSON.parse(event.data);
+              if (data.type === "progress" && data.transfers) {
+                handleProgressUpdate(data.transfers);
+              }
+            } catch (e) {
+              console.error("WebSocket message parse error:", e);
+            }
+          };
+          
+          ws.onerror = (error) => {
+            console.error("WebSocket error:", error);
+            if (wsStatusEl) wsStatusEl.className = "ws-status error";
+          };
+          
+          ws.onclose = () => {
+            console.log("WebSocket closed");
+            if (wsStatusEl) wsStatusEl.className = "ws-status";
+            ws = null;
+            // Reconnect after 5 seconds
+            if (!wsReconnectTimer) {
+              wsReconnectTimer = setTimeout(() => {
+                wsReconnectTimer = null;
+                if (serverAlive) connectWebSocket();
+              }, 5000);
+            }
+          };
+        } catch (e) {
+          console.error("WebSocket connection error:", e);
+          if (wsStatusEl) wsStatusEl.className = "ws-status error";
+        }
+      }
+      
+      function handleProgressUpdate(transfers) {
+        // Update UI with real-time progress from server
+        for (const transfer of transfers) {
+          // Match by filename
+          const idx = selectedFiles.findIndex(f => f.name === transfer.filename);
+          if (idx >= 0 && uploads[idx]) {
+            const st = uploads[idx];
+            
+            // Update progress from server's perspective
+            if (transfer.total_size && transfer.bytes_written !== undefined) {
+              const serverProgress = (transfer.bytes_written / transfer.total_size) * 100;
+              const bar = document.getElementById("bar-" + idx);
+              if (bar) {
+                // Use max of client and server progress for smoother UX
+                const currentProgress = parseFloat(bar.style.width) || 0;
+                if (serverProgress > currentProgress) {
+                  bar.style.width = serverProgress.toFixed(1) + "%";
+                }
+              }
+              
+              // Update status text with percentage
+              if (st.running && serverProgress < 100) {
+                setStatusText(idx, `UPLOADING... ${serverProgress.toFixed(0)}%`, "var(--c-yellow)");
+              }
+            }
+            
+            // Update throughput from server (if available)
+            if (transfer.throughput_mbps !== undefined && transfer.throughput_mbps > 0) {
+              setRate(idx, transfer.throughput_mbps);
+              st.speedMbps = transfer.throughput_mbps;
+            }
+            
+            // Update status if provided
+            if (transfer.status) {
+              if (transfer.status === "complete" || transfer.status === "done") {
+                setStatusText(idx, "UPLOAD_COMPLETE", "var(--c-green)");
+              } else if (transfer.status === "error" || transfer.status === "failed") {
+                setStatusText(idx, "ERROR", "var(--c-red)");
+              }
+            }
+          }
+        }
+      }
+
+      // Health Polling: update status to DISCONNECTED when server is down
+      async function pollHealth() {
+        // Don't poll health during active uploads to avoid false disconnection warnings
+        // The server is busy processing chunks and may not respond to health checks quickly
+        if (uploadInProgress) {
+          serverAlive = true;
+          return;
+        }
+        
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 3000); // Increased to 3s
+        try {
+          const res = await fetch("/health", { cache: "no-store", signal: controller.signal });
+          if (res.ok) {
+            serverAlive = true;
+            if (cursorEl) cursorEl.style.color = "var(--c-green)";
+            if (selectedFiles.length === 0 && !uploadInProgress) {
+              footerStatus.textContent = "STATUS: IDLE";
+              footerStatus.style.color = "var(--c-dim)";
+            }
+          } else {
+            throw new Error("bad status");
+          }
+        } catch (e) {
+          serverAlive = false;
+          if (cursorEl) cursorEl.style.color = "var(--c-red)";
+          footerStatus.textContent = "STATUS: DISCONNECTED";
+          footerStatus.style.color = "var(--c-red)";
+        } finally {
+          clearTimeout(timeout);
+        }
+      }
+
+      async function loadManifest() {
+        try {
+          const res = await fetch(window.location.pathname.replace(/\/$/, "") + "/manifest", { cache: "no-store" });
+          if (!res.ok) throw new Error("bad status");
+          const data = await res.json();
+          manifestConfig = {
+            chunkSize: data.chunk_size || manifestDefaults.chunkSize,
+            maxConcurrent: data.max_concurrent || manifestDefaults.maxConcurrent,
+          };
+        } catch (e) {
+          manifestConfig = { ...manifestDefaults };
+        }
+      }
+
+      // Start polling health every second
+      setInterval(pollHealth, 1000);
+      // Initial check and WebSocket connection
+      loadManifest().then(() => {
+        pollHealth();
+        connectWebSocket();
+      });
+    </script>
+  </body>
+</html>
