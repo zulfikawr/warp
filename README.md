@@ -110,7 +110,7 @@ warp operates as a temporary HTTP server for file transfers on local networks:
 ### From Go Repository
 
 ```bash
-go install github.com/zulfikawr/warp@v1.0.0
+go install github.com/zulfikawr/warp@latest
 ```
 
 ### From Source
