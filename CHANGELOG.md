@@ -199,12 +199,9 @@ This is the initial release, no migration required.
 #### Next Steps
 
 Future releases may include:
-- CI/CD pipeline integration
-- Binary releases for all platforms
 - Docker image distribution
 - Additional encryption algorithms
 - Enhanced discovery protocols
-- Rate limiting and bandwidth control
 - Multi-file transfer support
 
 ---
