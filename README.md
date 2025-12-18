@@ -1,18 +1,14 @@
 <div align="center">
 
-```
-     
-██   ██  ▀▀█▄ ████▄ ████▄
-██ █ ██ ▄█▀██ ██ ▀▀ ██ ██
- ██▀██  ▀█▄██ ██    ████▀
-                     ██    
-                     ▀▀    
-```
+# warp
+
+![snippet](./snippet.png)
 
 Fast, secure file transfer tool for local networks with encryption, progress tracking, and monitoring capabilities, written in Go.
 
+[![Go Reference](https://pkg.go.dev/badge/github.com/zulfikawr/warp.svg)](https://pkg.go.dev/github.com/zulfikawr/warp)
+[![Go Version](https://img.shields.io/badge/Go-1.25.4+-00ADD8?logo=go)](https://go.dev/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Go Version](https://img.shields.io/badge/Go-1.21+-00ADD8?logo=go)](https://go.dev/)
 [![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey)](https://github.com/zulfikawr/warp)
 
 </div>
@@ -111,9 +107,15 @@ warp operates as a temporary HTTP server for file transfers on local networks:
 
 ## Installation
 
+### From Go Repository
+
+```bash
+go install github.com/zulfikawr/warp@v1.0.0
+```
+
 ### From Source
 
-Requires Go 1.21 or higher:
+Requires Go 1.25.4 or higher:
 
 ```bash
 git clone https://github.com/zulfikawr/warp.git
