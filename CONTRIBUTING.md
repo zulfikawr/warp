@@ -12,29 +12,33 @@ Thank you for your interest in contributing to warp. This document provides guid
 
 ### Prerequisites
 
-- Go 1.21 or higher
+- Go 1.25 or higher
 - Git
 - Basic understanding of Go, HTTP, and networking concepts
 
 ### Development Setup
 
 1. Fork and clone the repository:
+
 ```bash
 git clone https://github.com/zulfikawr/warp.git
 cd warp
 ```
 
 2. Install dependencies:
+
 ```bash
 go mod download
 ```
 
 3. Build the project:
+
 ```bash
 go build -o warp ./cmd/warp
 ```
 
 4. Run tests:
+
 ```bash
 go test ./...
 ```
@@ -50,6 +54,7 @@ go test ./...
 ### Making Changes
 
 1. Create a new branch from `main`:
+
 ```bash
 git checkout -b feature/your-feature-name
 ```
@@ -59,16 +64,19 @@ git checkout -b feature/your-feature-name
 3. Add tests for new functionality
 
 4. Run the test suite:
+
 ```bash
 go test ./... -v
 ```
 
 5. Run linters (if available):
+
 ```bash
 golangci-lint run
 ```
 
 6. Commit your changes with clear commit messages:
+
 ```bash
 git commit -m "feat: add new feature description"
 ```
@@ -86,6 +94,7 @@ Follow conventional commits specification:
 - `chore:` - maintenance tasks
 
 Example:
+
 ```
 feat: add parallel chunk upload support
 
@@ -101,6 +110,7 @@ feat: add parallel chunk upload support
 2. Ensure all tests pass and code coverage is maintained
 
 3. Push your branch and create a pull request:
+
 ```bash
 git push origin feature/your-feature-name
 ```
@@ -154,6 +164,7 @@ test/              - End-to-end tests
 - Test error cases and edge conditions
 
 Example test structure:
+
 ```go
 func TestFunctionName(t *testing.T) {
     tests := []struct {
@@ -164,7 +175,7 @@ func TestFunctionName(t *testing.T) {
     }{
         // test cases
     }
-    
+
     for _, tt := range tests {
         t.Run(tt.name, func(t *testing.T) {
             // test implementation
