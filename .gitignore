@@ -37,6 +37,7 @@ temp/
 
 # Test artifacts
 test-data/
+testdata/
 **/warp-src-*
 **/warp-host-*
 **/warp-resume-*
