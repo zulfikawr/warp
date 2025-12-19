@@ -66,8 +66,9 @@ func LoadConfig() (*Config, error) {
 			// Config file not found - use defaults (not an error)
 			return config, nil
 		}
-		// Config file was found but another error occurred
-		return config, nil // Return defaults on error instead of failing
+		// Config file was found but another error occurred (parse error, permission, etc.)
+		// Return the actual error so users know their config is broken
+		return nil, fmt.Errorf("error reading config file: %w", err)
 	}
 
 	// Unmarshal config

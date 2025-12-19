@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"os"
@@ -28,7 +29,14 @@ func sendfileZeroCopy(w http.ResponseWriter, f *os.File, offset int64, length in
 	if err != nil {
 		return err
 	}
-	defer func() { _ = conn.Close() }()
+	// Clean up connection on exit
+	defer func() {
+		if conn != nil {
+			if err := conn.Close(); err != nil {
+				log.Printf("Warning: failed to close connection: %v", err)
+			}
+		}
+	}()
 
 	// Write HTTP response headers manually
 	headers := fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Length: %d\r\nContent-Type: application/octet-stream\r\n", length)
@@ -62,7 +70,6 @@ func sendfileZeroCopy(w http.ResponseWriter, f *os.File, offset int64, length in
 	err = rawConn.Write(func(socketFD uintptr) bool {
 		for totalSent < length {
 			remaining := length - totalSent
-			currentOffset := offset + totalSent
 
 			// sendfile can transfer up to ~2GB at a time
 			chunkSize := remaining
@@ -70,7 +77,10 @@ func sendfileZeroCopy(w http.ResponseWriter, f *os.File, offset int64, length in
 				chunkSize = 1 << 30
 			}
 
-			n, err := syscall.Sendfile(int(socketFD), int(f.Fd()), &currentOffset, int(chunkSize))
+			// Calculate offset fresh each iteration to prevent corruption
+			// sendfile modifies the offset pointer, so we must use a local copy
+			useOffset := offset + totalSent
+			n, err := syscall.Sendfile(int(socketFD), int(f.Fd()), &useOffset, int(chunkSize))
 			if err != nil {
 				if err == syscall.EAGAIN {
 					// Would block, try again

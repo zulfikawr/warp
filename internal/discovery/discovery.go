@@ -2,6 +2,7 @@ package discovery
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"time"
@@ -94,12 +95,16 @@ func Browse(ctx context.Context, timeout time.Duration) ([]Service, error) {
 	}()
 
 	err = resolver.Browse(ctx, "_warp._tcp", "local.", entries)
-	if err != nil {
+	if err != nil && !errors.Is(err, context.DeadlineExceeded) {
+		// Real error, not just timeout
 		return nil, err
 	}
 
+	// Wait for timeout/cancellation
 	<-ctx.Done()
-	// Wait for goroutine to actually finish processing
+
+	// Wait for processing goroutine to finish
+	// The entries channel will be closed by zeroconf when Browse returns
 	<-done
 
 	return results, nil

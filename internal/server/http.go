@@ -151,12 +151,17 @@ type Server struct {
 	activeUploads sync.Map // filename -> *ProgressTracker
 	// Rate limiting (exported for CLI configuration)
 	RateLimitMbps float64  // 0 = no limit
-	rateLimiters  sync.Map // clientIP -> *rate.Limiter
+	rateLimiters  sync.Map // clientIP -> *rateLimiterEntry
+	// Checksum caching for performance
+	checksumCache sync.Map // filepath -> *checksumCacheEntry
 	// File caching (exported for CLI configuration)
 	MaxCacheSize int64 // max cache size in bytes (default 100MB)
 	// Encryption (exported for CLI configuration)
 	Password       string // If set, enables encryption
 	EncryptionSalt []byte // Salt for key derivation
+	// Graceful shutdown support
+	shutdownCtx    context.Context
+	shutdownCancel context.CancelFunc
 }
 
 // CachedFile represents a cached file in memory
@@ -166,6 +171,19 @@ type CachedFile struct {
 	ETag     string
 	Size     int64
 	CachedAt time.Time
+}
+
+// rateLimiterEntry tracks rate limiter with last access time
+type rateLimiterEntry struct {
+	limiter    *rate.Limiter
+	lastAccess time.Time
+}
+
+// checksumCacheEntry caches file checksums with validation metadata
+type checksumCacheEntry struct {
+	checksum string
+	modTime  time.Time
+	size     int64
 }
 
 // RateLimitedWriter wraps an io.Writer with rate limiting
@@ -190,8 +208,11 @@ func (s *Server) getRateLimiter(clientIP string) *rate.Limiter {
 		return nil // No rate limiting
 	}
 
-	if lim, ok := s.rateLimiters.Load(clientIP); ok {
-		return lim.(*rate.Limiter)
+	if val, ok := s.rateLimiters.Load(clientIP); ok {
+		entry := val.(*rateLimiterEntry)
+		// Update last access time
+		entry.lastAccess = time.Now()
+		return entry.limiter
 	}
 
 	// Convert Mbps to bytes per second
@@ -204,7 +225,13 @@ func (s *Server) getRateLimiter(clientIP string) *rate.Limiter {
 	)
 
 	lim := rate.NewLimiter(rate.Limit(bytesPerSecond), burst)
-	s.rateLimiters.Store(clientIP, lim)
+
+	entry := &rateLimiterEntry{
+		limiter:    lim,
+		lastAccess: time.Now(),
+	}
+
+	s.rateLimiters.Store(clientIP, entry)
 	return lim
 }
 
@@ -326,8 +353,8 @@ func (ln tcpKeepAliveListener) Accept() (net.Conn, error) {
 
 // WebSocket upgrader for real-time progress updates
 var wsUpgrader = websocket.Upgrader{
-	ReadBufferSize:  1024,
-	WriteBufferSize: 1024,
+	ReadBufferSize:  WebSocketReadBuffer,
+	WriteBufferSize: WebSocketWriteBuffer,
 	CheckOrigin: func(r *http.Request) bool {
 		// Allow connections from same origin only for security
 		origin := r.Header.Get("Origin")
@@ -337,6 +364,51 @@ var wsUpgrader = websocket.Upgrader{
 		// In production, validate origin properly
 		return true
 	},
+}
+
+// cleanupRateLimiters removes stale rate limiters to prevent memory leak
+func (s *Server) cleanupRateLimiters() {
+	staleThreshold := time.Now().Add(-1 * time.Hour)
+
+	s.rateLimiters.Range(func(key, value interface{}) bool {
+		entry := value.(*rateLimiterEntry)
+		if entry.lastAccess.Before(staleThreshold) {
+			s.rateLimiters.Delete(key)
+		}
+		return true
+	})
+}
+
+// getCachedChecksum returns cached checksum or computes it
+func (s *Server) getCachedChecksum(path string) (string, error) {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return "", err
+	}
+
+	// Check cache
+	if val, ok := s.checksumCache.Load(path); ok {
+		entry := val.(*checksumCacheEntry)
+		// Verify file hasn't changed
+		if entry.modTime.Equal(fi.ModTime()) && entry.size == fi.Size() {
+			return entry.checksum, nil
+		}
+	}
+
+	// Compute checksum
+	checksum, err := computeFileChecksum(path)
+	if err != nil {
+		return "", err
+	}
+
+	// Cache it
+	s.checksumCache.Store(path, &checksumCacheEntry{
+		checksum: checksum,
+		modTime:  fi.ModTime(),
+		size:     fi.Size(),
+	})
+
+	return checksum, nil
 }
 
 // Start initializes and starts the HTTP server. It returns the accessible URL.
@@ -398,16 +470,42 @@ func (s *Server) Start() (string, error) {
 	_, _ = fmt.Sscanf(portStr, "%d", &port)
 	s.Port = port
 
+	// Initialize shutdown context for graceful termination of background goroutines
+	s.shutdownCtx, s.shutdownCancel = context.WithCancel(context.Background())
+
 	go func() {
 		_ = s.httpServer.Serve(optimizedListener)
 	}()
 
-	// Start session cleanup routine
+	// Start session cleanup routine with proper shutdown support
 	go func() {
-		ticker := time.NewTicker(15 * time.Minute)
+		ticker := time.NewTicker(SessionCleanupInterval)
 		defer ticker.Stop()
-		for range ticker.C {
-			s.cleanupStaleSessions()
+
+		for {
+			select {
+			case <-ticker.C:
+				s.cleanupStaleSessions()
+			case <-s.shutdownCtx.Done():
+				log.Println("Stopping session cleanup goroutine")
+				return
+			}
+		}
+	}()
+
+	// Start rate limiter cleanup routine to prevent memory leak
+	go func() {
+		ticker := time.NewTicker(30 * time.Minute)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ticker.C:
+				s.cleanupRateLimiters()
+			case <-s.shutdownCtx.Done():
+				log.Println("Stopping rate limiter cleanup goroutine")
+				return
+			}
 		}
 	}()
 
@@ -457,8 +555,8 @@ func (s *Server) handleProgressWebSocket(w http.ResponseWriter, r *http.Request)
 	metrics.ActiveWebSocketConnections.Inc()
 	defer metrics.ActiveWebSocketConnections.Dec()
 
-	// Send progress updates every 100ms
-	ticker := time.NewTicker(100 * time.Millisecond)
+	// Send progress updates periodically
+	ticker := time.NewTicker(WebSocketUpdateInterval)
 	defer ticker.Stop()
 
 	for {
@@ -616,8 +714,8 @@ func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
 
 	// Serve with compression if applicable
 	if shouldCompress {
-		// Compute checksum first
-		checksum, err := computeFileChecksum(s.SrcPath)
+		// Compute checksum first (with caching)
+		checksum, err := s.getCachedChecksum(s.SrcPath)
 		if err == nil {
 			w.Header().Set("X-Content-SHA256", checksum)
 		}
@@ -640,8 +738,8 @@ func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
 
 	// Use zero-copy sendfile for large binary files on Linux (>10MB and not compressible)
 	if runtime.GOOS == "linux" && fi.Size() > 10*1024*1024 && !isCompressible(s.SrcPath) {
-		// Compute checksum before sending
-		checksum, err := computeFileChecksum(s.SrcPath)
+		// Compute checksum before sending (with caching)
+		checksum, err := s.getCachedChecksum(s.SrcPath)
 		if err == nil {
 			w.Header().Set("X-Content-SHA256", checksum)
 		}
@@ -671,8 +769,8 @@ func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Normal full file download without compression (fallback)
-	// Compute checksum for integrity verification
-	checksum, err := computeFileChecksum(s.SrcPath)
+	// Compute checksum for integrity verification (with caching)
+	checksum, err := s.getCachedChecksum(s.SrcPath)
 	if err == nil {
 		w.Header().Set("X-Content-SHA256", checksum)
 	}
@@ -745,7 +843,7 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Set max upload size to 10GB for large file support
-	r.Body = http.MaxBytesReader(w, r.Body, 10<<30) // 10GB limit
+	r.Body = http.MaxBytesReader(w, r.Body, MaxUploadSize) // 10GB limit
 
 	// Check available disk space (best effort)
 	if r.ContentLength > 0 {
@@ -795,6 +893,10 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		metrics.ActiveUploads.Inc()
 		metrics.ActiveTransfers.Inc()
 
+		// Limit each part to prevent memory exhaustion (DoS protection)
+		const MaxPartSize = 10 << 30 // 10GB per part
+		limitedPart := io.LimitReader(part, MaxPartSize)
+
 		// Sanitize filename to prevent directory traversal
 		name := filepath.Base(part.FileName())
 		if name == "." || name == ".." {
@@ -818,7 +920,8 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		bufPtr := getBuffer(bufferSize)
 		defer putBuffer(bufPtr) // Ensure buffer is returned even on error
 		buf := *bufPtr
-		n, err := io.CopyBuffer(out, part, buf)
+		// Use limited reader to prevent memory exhaustion
+		n, err := io.CopyBuffer(out, limitedPart, buf)
 		cerr := out.Close()
 		_ = part.Close()
 
@@ -870,27 +973,52 @@ func sanitizeFilename(name string) (string, error) {
 		return "", errors.New("empty filename")
 	}
 
-	// Clean path separators and get base
-	name = filepath.Base(filepath.Clean(name))
+	// Reject path separators immediately (directory traversal prevention)
+	if strings.ContainsAny(name, "/\\") {
+		return "", errors.New("filename contains path separators")
+	}
+
+	// Reject null bytes (can cause issues in some filesystems)
+	if strings.Contains(name, "\x00") {
+		return "", errors.New("filename contains null bytes")
+	}
+
+	// Reject ".." anywhere in the name (even as substring like "0..")
+	if strings.Contains(name, "..") {
+		return "", errors.New("filename contains directory traversal sequence")
+	}
+
+	// Clean and get base
+	cleaned := filepath.Base(filepath.Clean(name))
+
+	// Verify cleaning didn't change the name (indicates potential attack)
+	if cleaned != name {
+		return "", fmt.Errorf("filename normalization changed input: %q -> %q", name, cleaned)
+	}
 
 	// Reject dangerous names
-	if name == "" || name == "." || name == ".." {
+	if cleaned == "" || cleaned == "." || cleaned == ".." {
 		return "", errors.New("invalid filename")
 	}
 
-	// Remove control characters and null bytes
-	for _, r := range name {
+	// Remove control characters and DEL
+	for _, r := range cleaned {
 		if r < 32 || r == 0x7F {
 			return "", errors.New("filename contains control characters")
 		}
 	}
 
-	// Limit length to 255 bytes (common filesystem limit)
-	if len(name) > 255 {
-		return "", errors.New("filename too long")
+	// Reject filenames that are purely whitespace
+	if strings.TrimSpace(cleaned) == "" {
+		return "", errors.New("filename is only whitespace")
 	}
 
-	return name, nil
+	// Limit length to 255 bytes (common filesystem limit)
+	if len(cleaned) > 255 {
+		return "", errors.New("filename too long (max 255 bytes)")
+	}
+
+	return cleaned, nil
 }
 
 // findUniqueFilename prevents file overwrites by appending (1), (2), etc.
@@ -1127,7 +1255,7 @@ func (s *Server) cleanupSession(sessionID string) {
 
 // cleanupStaleSessions removes sessions that haven't been active recently
 func (s *Server) cleanupStaleSessions() {
-	staleThreshold := 1 * time.Hour
+	staleThreshold := StaleSessionThreshold
 	s.uploadSessions.Range(func(key, value interface{}) bool {
 		session := value.(*uploadSession)
 		session.mu.Lock()
@@ -1277,8 +1405,19 @@ func (s *Server) handleRawUpload(w http.ResponseWriter, r *http.Request, encoded
 		http.Error(w, "hijack failed", http.StatusInternalServerError)
 		return
 	}
-	defer func() { _ = conn.Close() }()
-	defer func() { _ = f.Close() }()
+	// Consolidated cleanup to prevent race conditions
+	defer func() {
+		if f != nil {
+			if err := f.Close(); err != nil {
+				log.Printf("Warning: failed to close file: %v", err)
+			}
+		}
+		if conn != nil {
+			if err := conn.Close(); err != nil {
+				log.Printf("Warning: failed to close connection: %v", err)
+			}
+		}
+	}()
 
 	// Manual deadlines since http.Server timeouts no longer apply post-hijack
 	_ = conn.SetReadDeadline(time.Now().Add(time.Hour))
@@ -1361,13 +1500,20 @@ func (s *Server) getChunkStat(name string) *chunkStat {
 
 // Shutdown stops the server gracefully.
 func (s *Server) Shutdown() error {
-	if s.httpServer == nil {
-		return nil
+	// Cancel shutdown context to stop background goroutines
+	if s.shutdownCancel != nil {
+		s.shutdownCancel()
 	}
+
 	if s.advertiser != nil {
 		s.advertiser.Close()
 	}
-	// Use context with timeout for graceful shutdown
+
+	if s.httpServer == nil {
+		return nil
+	}
+
+	// Use context with timeout for graceful HTTP server shutdown
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	return s.httpServer.Shutdown(ctx)

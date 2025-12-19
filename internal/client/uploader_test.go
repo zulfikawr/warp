@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 )
@@ -31,11 +32,15 @@ func TestParallelUpload(t *testing.T) {
 	}
 
 	// Create mock server
+	var mu sync.Mutex
 	receivedChunks := make(map[int][]byte)
 	var sessionID string
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
 		sessionID = r.Header.Get("X-Upload-Session")
+		mu.Unlock()
+
 		chunkIDStr := r.Header.Get("X-Chunk-Id")
 
 		if chunkIDStr == "" {
@@ -56,7 +61,9 @@ func TestParallelUpload(t *testing.T) {
 			return
 		}
 
+		mu.Lock()
 		receivedChunks[chunkID] = data
+		mu.Unlock()
 
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"success":true}`))
@@ -80,15 +87,22 @@ func TestParallelUpload(t *testing.T) {
 	}
 
 	// Verify all chunks were received
+	mu.Lock()
 	expectedChunks := 5 // 5MB / 1MB
 	if len(receivedChunks) != expectedChunks {
+		mu.Unlock()
 		t.Errorf("Expected %d chunks, got %d", expectedChunks, len(receivedChunks))
+	} else {
+		mu.Unlock()
 	}
 
 	// Reassemble and verify data
 	var reassembled bytes.Buffer
 	for i := 0; i < expectedChunks; i++ {
+		mu.Lock()
 		chunk, ok := receivedChunks[i]
+		mu.Unlock()
+
 		if !ok {
 			t.Errorf("Missing chunk %d", i)
 			continue

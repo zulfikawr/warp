@@ -16,21 +16,37 @@ import (
 	"github.com/zulfikawr/warp/internal/ui"
 )
 
-// httpClient with optimized connection pooling and HTTP/2 support
-var httpClient = &http.Client{
-	Transport: &http.Transport{
-		MaxIdleConns:          100,
-		MaxIdleConnsPerHost:   10,
-		IdleConnTimeout:       90 * time.Second,
-		DisableKeepAlives:     false,
-		ForceAttemptHTTP2:     true,
-		WriteBufferSize:       256 * 1024,
-		ReadBufferSize:        256 * 1024,
-		DisableCompression:    false, // Enable gzip compression
-		TLSHandshakeTimeout:   10 * time.Second,
-		ResponseHeaderTimeout: 30 * time.Second,
-	},
-	Timeout: 5 * time.Minute,
+// Downloader handles file downloads with configurable HTTP client
+type Downloader struct {
+	client *http.Client
+}
+
+// NewDownloader creates a new Downloader with the given HTTP client
+// If client is nil, uses the default client with optimized settings
+func NewDownloader(client *http.Client) *Downloader {
+	if client == nil {
+		client = defaultHTTPClient()
+	}
+	return &Downloader{client: client}
+}
+
+// defaultHTTPClient returns an HTTP client with optimized connection pooling and HTTP/2 support
+func defaultHTTPClient() *http.Client {
+	return &http.Client{
+		Transport: &http.Transport{
+			MaxIdleConns:          100,
+			MaxIdleConnsPerHost:   10,
+			IdleConnTimeout:       90 * time.Second,
+			DisableKeepAlives:     false,
+			ForceAttemptHTTP2:     true,
+			WriteBufferSize:       256 * 1024,
+			ReadBufferSize:        256 * 1024,
+			DisableCompression:    false, // Enable gzip compression
+			TLSHandshakeTimeout:   10 * time.Second,
+			ResponseHeaderTimeout: 30 * time.Second,
+		},
+		Timeout: 5 * time.Minute,
+	}
 }
 
 // getOptimalBufferSize determines the best buffer size based on file size
@@ -50,12 +66,12 @@ func getOptimalBufferSize(fileSize int64) int {
 // Receive downloads from url to outputPath. If outputPath is empty, derive from headers or URL.
 // For text content (Content-Type: text/plain), outputs to stdout instead of saving to a file.
 // Supports resumable downloads via HTTP Range headers if the file already partially exists.
-func Receive(url string, outputPath string, force bool, progress io.Writer) (string, error) {
+func (d *Downloader) Receive(url string, outputPath string, force bool, progress io.Writer) (string, error) {
 	// First, make a HEAD request or GET to determine filename and check for existing partial file
 	var startByte int64 = 0
 
 	// Try initial request to get headers
-	resp, err := httpClient.Get(url)
+	resp, err := d.client.Get(url)
 	if err != nil {
 		return "", err
 	}
@@ -135,7 +151,7 @@ func Receive(url string, outputPath string, force bool, progress io.Writer) (str
 			return "", err
 		}
 		req.Header.Set("Range", fmt.Sprintf("bytes=%d-", startByte))
-		downloadResp, err = httpClient.Do(req)
+		downloadResp, err = d.client.Do(req)
 		if err != nil {
 			return "", err
 		}
@@ -151,14 +167,14 @@ func Receive(url string, outputPath string, force bool, progress io.Writer) (str
 			defer func() { _ = f.Close() }()
 			startByte = 0
 			_ = downloadResp.Body.Close()
-			downloadResp, err = httpClient.Get(url)
+			downloadResp, err = d.client.Get(url)
 			if err != nil {
 				return "", err
 			}
 			defer func() { _ = downloadResp.Body.Close() }()
 		}
 	} else {
-		downloadResp, err = httpClient.Get(url)
+		downloadResp, err = d.client.Get(url)
 		if err != nil {
 			return "", err
 		}
@@ -217,6 +233,17 @@ func Receive(url string, outputPath string, force bool, progress io.Writer) (str
 	return outputPath, nil
 }
 
+// Package-level Receive function for backward compatibility
+// Uses default HTTP client with optimized settings
+var defaultDownloader = NewDownloader(nil)
+
+// Receive downloads from url using the default HTTP client
+// This is a convenience function that wraps Downloader.Receive
+func Receive(url string, outputPath string, force bool, progress io.Writer) (string, error) {
+	return defaultDownloader.Receive(url, outputPath, force, progress)
+}
+
+// filenameFromResponse extracts filename from Content-Disposition
 func filenameFromResponse(resp *http.Response) string {
 	cd := resp.Header.Get("Content-Disposition")
 	if cd == "" {

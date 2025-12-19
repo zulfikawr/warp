@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -45,6 +46,7 @@ type UploadSession struct {
 	File           *os.File
 	TotalSize      int64
 	Config         *UploadConfig
+	Client         *http.Client // HTTP client for requests
 	uploadedBytes  atomic.Int64
 	startTime      time.Time
 	chunks         []chunkInfo
@@ -52,6 +54,7 @@ type UploadSession struct {
 	statusMu       sync.RWMutex
 	progressTicker *time.Ticker
 	cancel         context.CancelFunc
+	bufferPool     sync.Pool // Buffer pool for chunk allocation
 }
 
 type chunkInfo struct {
@@ -112,9 +115,16 @@ func NewUploadSession(url, filepath string, config *UploadConfig) (*UploadSessio
 		File:        file,
 		TotalSize:   stat.Size(),
 		Config:      config,
+		Client:      defaultHTTPClient(), // Use shared HTTP client
 		chunks:      chunks,
 		chunkStatus: chunkStatus,
 		startTime:   time.Now(),
+		bufferPool: sync.Pool{
+			New: func() interface{} {
+				b := make([]byte, config.ChunkSize)
+				return &b
+			},
+		},
 	}, nil
 }
 
@@ -221,21 +231,29 @@ func (s *UploadSession) uploadChunk(ctx context.Context, chunk chunkInfo) error 
 		// Update status
 		s.updateChunkStatus(chunk.ID, "uploading", attempt)
 
+		// Get buffer from pool
+		bufPtr := s.bufferPool.Get().(*[]byte)
+		data := (*bufPtr)[:chunk.Size] // Slice to actual chunk size
+
 		// Read chunk data
-		data := make([]byte, chunk.Size)
 		_, err := s.File.ReadAt(data, chunk.Offset)
 		if err != nil {
+			s.bufferPool.Put(bufPtr) // Return buffer on error
 			lastErr = fmt.Errorf("read chunk %d: %w", chunk.ID, err)
 			s.updateChunkStatus(chunk.ID, "failed", attempt)
 			continue
 		}
 
-		// Calculate checksum
+		// Compute checksum
 		checksum := sha256.Sum256(data)
 		checksumHex := hex.EncodeToString(checksum[:])
 
 		// Send chunk
 		err = s.sendChunk(ctx, chunk, data, checksumHex)
+
+		// Return buffer after sending
+		s.bufferPool.Put(bufPtr)
+
 		if err != nil {
 			lastErr = err
 			s.updateChunkStatus(chunk.ID, "failed", attempt)
@@ -260,7 +278,7 @@ func (s *UploadSession) sendChunk(ctx context.Context, chunk chunkInfo, data []b
 	}
 
 	// Set headers for chunk upload
-	filename := s.File.Name()
+	filename := filepath.Base(s.File.Name())
 	req.Header.Set("X-File-Name", url.QueryEscape(filename))
 	req.Header.Set("X-Upload-Session", s.SessionID)
 	req.Header.Set("X-Upload-Offset", fmt.Sprintf("%d", chunk.Offset))
@@ -271,7 +289,7 @@ func (s *UploadSession) sendChunk(ctx context.Context, chunk chunkInfo, data []b
 	req.Header.Set("Content-Length", fmt.Sprintf("%d", len(data)))
 	req.Header.Set("Content-Type", "application/octet-stream")
 
-	resp, err := httpClient.Do(req)
+	resp, err := s.Client.Do(req)
 	if err != nil {
 		return fmt.Errorf("send request: %w", err)
 	}

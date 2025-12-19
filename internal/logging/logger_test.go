@@ -7,8 +7,14 @@ import (
 )
 
 func TestLoggerInitialization(t *testing.T) {
-	if logger == nil {
+	l := GetLogger()
+	if l == nil {
 		t.Fatal("Logger is not initialized")
+	}
+
+	// Verify no initialization error occurred
+	if err := InitError(); err != nil {
+		t.Logf("Warning: logger initialization had error: %v", err)
 	}
 }
 

@@ -87,11 +87,13 @@ func Decrypt(ciphertext, key []byte) ([]byte, error) {
 
 // EncryptReader wraps an io.Reader to encrypt data on-the-fly
 type EncryptReader struct {
-	reader io.Reader
-	gcm    cipher.AEAD
-	nonce  []byte
-	buffer []byte
-	offset int
+	reader     io.Reader
+	gcm        cipher.AEAD
+	nonce      []byte
+	buffer     []byte
+	offset     int
+	chunkCount uint64
+	maxChunks  uint64 // Safety limit to prevent nonce reuse
 }
 
 // NewEncryptReader creates a new encrypting reader
@@ -112,11 +114,13 @@ func NewEncryptReader(reader io.Reader, key []byte) (*EncryptReader, error) {
 	}
 
 	return &EncryptReader{
-		reader: reader,
-		gcm:    gcm,
-		nonce:  nonce,
-		buffer: nonce, // First read returns the nonce
-		offset: 0,
+		reader:     reader,
+		gcm:        gcm,
+		nonce:      nonce,
+		buffer:     nonce, // First read returns the nonce
+		offset:     0,
+		chunkCount: 0,
+		maxChunks:  1 << 32, // 4 billion chunks max (safe for 12-byte nonce)
 	}, nil
 }
 
@@ -133,22 +137,29 @@ func (er *EncryptReader) Read(p []byte) (int, error) {
 		return n, nil
 	}
 
+	// Check nonce space exhaustion
+	if er.chunkCount >= er.maxChunks {
+		return 0, fmt.Errorf("encryption limit reached: maximum chunks exceeded (processed %d chunks)", er.chunkCount)
+	}
+
 	// Read a chunk from the underlying reader
 	chunk := make([]byte, 64*1024) // 64KB chunks
 	n, err := er.reader.Read(chunk)
 	if n > 0 {
+		// Use deterministic nonce construction: first 4 bytes stay as random, last 8 bytes are counter
+		// This provides 2^64 unique nonces with the same base nonce
+		if len(er.nonce) == NonceSize {
+			// Store counter in last 8 bytes (big-endian)
+			for i := 0; i < 8; i++ {
+				er.nonce[NonceSize-8+i] = byte(er.chunkCount >> (56 - uint(i*8)))
+			}
+		}
+		er.chunkCount++
+
 		// Encrypt the chunk
 		encrypted := er.gcm.Seal(nil, er.nonce, chunk[:n], nil)
 		er.buffer = encrypted
 		er.offset = 0
-
-		// Increment nonce for next chunk (simple counter mode)
-		for i := len(er.nonce) - 1; i >= 0; i-- {
-			er.nonce[i]++
-			if er.nonce[i] != 0 {
-				break
-			}
-		}
 
 		// Copy as much as possible to output
 		copied := copy(p, er.buffer)
@@ -165,12 +176,14 @@ func (er *EncryptReader) Read(p []byte) (int, error) {
 
 // DecryptReader wraps an io.Reader to decrypt data on-the-fly
 type DecryptReader struct {
-	reader io.Reader
-	gcm    cipher.AEAD
-	nonce  []byte
-	buffer []byte
-	offset int
-	first  bool
+	reader     io.Reader
+	gcm        cipher.AEAD
+	nonce      []byte
+	buffer     []byte
+	offset     int
+	first      bool
+	chunkCount uint64
+	maxChunks  uint64
 }
 
 // NewDecryptReader creates a new decrypting reader
@@ -186,9 +199,11 @@ func NewDecryptReader(reader io.Reader, key []byte) (*DecryptReader, error) {
 	}
 
 	return &DecryptReader{
-		reader: reader,
-		gcm:    gcm,
-		first:  true,
+		reader:     reader,
+		gcm:        gcm,
+		first:      true,
+		chunkCount: 0,
+		maxChunks:  1 << 32,
 	}, nil
 }
 
@@ -214,11 +229,24 @@ func (dr *DecryptReader) Read(p []byte) (int, error) {
 		return n, nil
 	}
 
+	// Check nonce space exhaustion
+	if dr.chunkCount >= dr.maxChunks {
+		return 0, fmt.Errorf("decryption limit reached: maximum chunks exceeded (processed %d chunks)", dr.chunkCount)
+	}
+
 	// Read encrypted chunk
 	// Size = 64KB plaintext + 16 bytes tag
 	chunk := make([]byte, 64*1024+dr.gcm.Overhead())
 	n, err := dr.reader.Read(chunk)
 	if n > 0 {
+		// Reconstruct nonce using same deterministic scheme as encryption
+		if len(dr.nonce) == NonceSize {
+			for i := 0; i < 8; i++ {
+				dr.nonce[NonceSize-8+i] = byte(dr.chunkCount >> (56 - uint(i*8)))
+			}
+		}
+		dr.chunkCount++
+
 		// Decrypt the chunk
 		plaintext, decErr := dr.gcm.Open(nil, dr.nonce, chunk[:n], nil)
 		if decErr != nil {
@@ -227,14 +255,6 @@ func (dr *DecryptReader) Read(p []byte) (int, error) {
 
 		dr.buffer = plaintext
 		dr.offset = 0
-
-		// Increment nonce for next chunk
-		for i := len(dr.nonce) - 1; i >= 0; i-- {
-			dr.nonce[i]++
-			if dr.nonce[i] != 0 {
-				break
-			}
-		}
 
 		// Copy to output
 		copied := copy(p, dr.buffer)

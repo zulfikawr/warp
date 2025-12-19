@@ -7,6 +7,15 @@ import (
 	"time"
 )
 
+// Pre-computed progress bars to eliminate string allocations (~1000/sec during transfer)
+var progressBars [21]string
+
+func init() {
+	for i := 0; i <= 20; i++ {
+		progressBars[i] = strings.Repeat("=", i) + strings.Repeat(" ", 20-i)
+	}
+}
+
 type ProgressReader struct {
 	R         io.Reader
 	Total     int64
@@ -74,7 +83,7 @@ func bar(pct float64) string {
 	if filled > 20 {
 		filled = 20
 	}
-	return strings.Repeat("=", filled) + strings.Repeat(" ", 20-filled)
+	return progressBars[filled]
 }
 
 // formatDuration formats a duration into a human-readable string

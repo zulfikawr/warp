@@ -5,7 +5,33 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 )
 
-var (
+var ( // Error classification
+	ErrorsTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "warp_errors_total",
+			Help: "Total errors by type and operation",
+		},
+		[]string{"type", "operation"},
+	)
+
+	// Retry tracking
+	RetryAttemptsTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "warp_retry_attempts_total",
+			Help: "Total retry attempts by operation and reason",
+		},
+		[]string{"operation", "reason"},
+	)
+
+	// Session lifecycle
+	SessionDuration = promauto.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "warp_session_duration_seconds",
+			Help:    "Total session duration from start to completion",
+			Buckets: prometheus.ExponentialBuckets(1, 2, 12), // 1s to ~1 hour
+		},
+		[]string{"type"}, // upload or download
+	)
 	// Upload metrics
 	UploadDuration = promauto.NewHistogramVec(
 		prometheus.HistogramOpts{
