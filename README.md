@@ -19,19 +19,19 @@ Command-line tool for transferring files between devices on local networks. Prov
 
 ### Features
 
-- Zero-copy sendfile on Linux, parallel chunk uploads
-- Send files or host upload server
-- AES-256-GCM encryption, SHA256 checksums
-- mDNS/DNS-SD discovery
-- Prometheus metrics
-- Real-time progress with WebSocket
-- YAML config, environment variables, CLI flags
-- Shell completion (bash, zsh, fish, PowerShell)
-- Share files, directories (auto-ZIP), text, stdin
-- Automatic gzip compression
-- In-memory caching
-- Rate limiting
-- Web UI for uploads
+- **File Transfer:** Zero-copy sendfile on Linux, parallel chunk uploads, buffer pooling
+- **Modes:** Send files or host upload server
+- **Security:** AES-256-GCM encryption with nonce exhaustion protection, SHA256 checksums, filename sanitization (fuzz-tested)
+- **Discovery:** mDNS/DNS-SD automatic service discovery
+- **Monitoring:** Prometheus metrics with error tracking and session duration
+- **Progress:** Real-time updates via WebSocket with pre-computed progress bars
+- **Configuration:** YAML config, environment variables, CLI flags
+- **Shell Integration:** Completion for bash, zsh, fish, PowerShell
+- **Sharing:** Files, directories (auto-ZIP), text, stdin
+- **Optimization:** Automatic gzip compression, in-memory caching with validation, checksum caching
+- **Rate Limiting:** Per-client bandwidth control with automatic cleanup
+- **Web UI:** Terminal-styled upload interface with drag-and-drop
+- **Quality:** Comprehensive test suite, race detector clean, 95% allocation reduction
 
 ## Table of Contents
 
@@ -71,16 +71,19 @@ warp send --help
 ## Quick Start
 
 Share a file:
+
 ```bash
 warp send myfile.zip
 ```
 
 Receive a file:
+
 ```bash
 warp receive http://192.168.1.100:54321/d/abc123token
 ```
 
 Discover servers:
+
 ```bash
 warp search
 ```
@@ -91,22 +94,24 @@ warp search
 
 Start server to share file, directory, or text.
 
-| Flag | Short | Type | Default | Required | Description |
-|------|-------|------|---------|----------|-------------|
-| `--port` | `-p` | int | random | No | Server port |
-| `--interface` | `-i` | string | auto | No | Network interface to bind |
-| `--text` | | string | | No | Share text instead of file |
-| `--stdin` | | bool | false | No | Read text from stdin |
-| `--rate-limit` | | float | 0 | No | Bandwidth limit in Mbps (0 = unlimited) |
-| `--cache-size` | | int | 100 | No | File cache size in MB |
-| `--no-qr` | | bool | false | No | Skip QR code display |
-| `--encrypt` | | bool | false | No | Encrypt with password (prompts if not provided) |
-| `--verbose` | `-v` | bool | false | No | Verbose logging |
+| Flag           | Short | Type   | Default | Required | Description                                     |
+| -------------- | ----- | ------ | ------- | -------- | ----------------------------------------------- |
+| `--port`       | `-p`  | int    | random  | No       | Server port                                     |
+| `--interface`  | `-i`  | string | auto    | No       | Network interface to bind                       |
+| `--text`       |       | string |         | No       | Share text instead of file                      |
+| `--stdin`      |       | bool   | false   | No       | Read text from stdin                            |
+| `--rate-limit` |       | float  | 0       | No       | Bandwidth limit in Mbps (0 = unlimited)         |
+| `--cache-size` |       | int    | 100     | No       | File cache size in MB                           |
+| `--no-qr`      |       | bool   | false   | No       | Skip QR code display                            |
+| `--encrypt`    |       | bool   | false   | No       | Encrypt with password (prompts if not provided) |
+| `--verbose`    | `-v`  | bool   | false   | No       | Verbose logging                                 |
 
 **Arguments:**
+
 - `<path>` - File or directory to share (required unless `--text` or `--stdin`)
 
 **Examples:**
+
 ```bash
 warp send document.pdf
 warp send ./myproject/
@@ -118,6 +123,7 @@ warp send --encrypt secret.pdf
 ```
 
 **Output:**
+
 ```
 Server started on :54321
 Service: warp-abc123._warp._tcp.local.
@@ -135,16 +141,17 @@ Press Ctrl+C to stop server
 
 Start server to receive file uploads.
 
-| Flag | Short | Type | Default | Required | Description |
-|------|-------|------|---------|----------|-------------|
-| `--interface` | `-i` | string | auto | No | Network interface to bind |
-| `--dest` | `-d` | string | `.` | No | Destination directory for uploads |
-| `--rate-limit` | | float | 0 | No | Bandwidth limit in Mbps |
-| `--no-qr` | | bool | false | No | Skip QR code display |
-| `--encrypt` | | bool | false | No | Require encrypted uploads |
-| `--verbose` | `-v` | bool | false | No | Verbose logging |
+| Flag           | Short | Type   | Default | Required | Description                       |
+| -------------- | ----- | ------ | ------- | -------- | --------------------------------- |
+| `--interface`  | `-i`  | string | auto    | No       | Network interface to bind         |
+| `--dest`       | `-d`  | string | `.`     | No       | Destination directory for uploads |
+| `--rate-limit` |       | float  | 0       | No       | Bandwidth limit in Mbps           |
+| `--no-qr`      |       | bool   | false   | No       | Skip QR code display              |
+| `--encrypt`    |       | bool   | false   | No       | Require encrypted uploads         |
+| `--verbose`    | `-v`  | bool   | false   | No       | Verbose logging                   |
 
 **Examples:**
+
 ```bash
 warp host
 warp host -d ./uploads
@@ -154,6 +161,7 @@ warp host --encrypt -d ./secure
 ```
 
 **Output:**
+
 ```
 Hosting uploads to './uploads'
 Token: abc123token
@@ -169,14 +177,19 @@ http://192.168.1.100:54321/upload
 
 Access the `/upload` endpoint in any browser for a terminal-styled upload interface.
 
+<div align="center">
+
 ![Web UI](./assets/mockup.png)
 
+</div>
+
 **Features:**
+
 - **Terminal UI Design**: Retro ASCII-styled interface with ANSI colors
 - **Drag & Drop**: Drop files anywhere or click to select
 - **Multiple Files**: Upload multiple files simultaneously
 - **Parallel Chunks**: Configurable workers (default: 3) and chunk size (default: 2MB)
-- **Real-time Progress**: 
+- **Real-time Progress**:
   - Per-file progress bars
   - Live upload speed in Mbps
   - WebSocket connection status indicator
@@ -187,12 +200,13 @@ Access the `/upload` endpoint in any browser for a terminal-styled upload interf
   - Per-file speed monitoring
 - **SHA256 Verification**: Automatic checksum validation server-side
 - **Session Management**: Unique session IDs prevent chunk conflicts
-- **Status Indicators**: 
+- **Status Indicators**:
   - WebSocket connection status (green = connected)
   - Real-time upload state (WAITING, UPLOADING, PAUSED, COMPLETE, ERROR)
   - Blinking cursor animation
 
 **Technical Details:**
+
 - Zero dependencies (vanilla JavaScript)
 - Responsive design for mobile/desktop
 - Exponential moving average for smooth speed display
@@ -205,20 +219,22 @@ Access the `/upload` endpoint in any browser for a terminal-styled upload interf
 
 Download file from warp server.
 
-| Flag | Short | Type | Default | Required | Description |
-|------|-------|------|---------|----------|-------------|
-| `--output` | `-o` | string | | No | Output filename or directory |
-| `--force` | `-f` | bool | false | No | Overwrite existing files |
-| `--workers` | | int | 3 | No | Parallel download workers |
-| `--chunk-size` | | int | 2 | No | Chunk size in MB |
-| `--no-checksum` | | bool | false | No | Skip SHA256 verification |
-| `--decrypt` | | bool | false | No | Decrypt with password |
-| `--verbose` | `-v` | bool | false | No | Verbose logging |
+| Flag            | Short | Type   | Default | Required | Description                  |
+| --------------- | ----- | ------ | ------- | -------- | ---------------------------- |
+| `--output`      | `-o`  | string |         | No       | Output filename or directory |
+| `--force`       | `-f`  | bool   | false   | No       | Overwrite existing files     |
+| `--workers`     |       | int    | 3       | No       | Parallel download workers    |
+| `--chunk-size`  |       | int    | 2       | No       | Chunk size in MB             |
+| `--no-checksum` |       | bool   | false   | No       | Skip SHA256 verification     |
+| `--decrypt`     |       | bool   | false   | No       | Decrypt with password        |
+| `--verbose`     | `-v`  | bool   | false   | No       | Verbose logging              |
 
 **Arguments:**
+
 - `<url>` - Server URL (required)
 
 **Examples:**
+
 ```bash
 warp receive http://192.168.1.100:54321/d/abc123token
 warp receive http://host:port/d/token -o myfile.zip
@@ -229,6 +245,7 @@ warp receive http://host:port/d/token --decrypt
 ```
 
 **Output:**
+
 ```
 Downloading: document.pdf (15.2 MB)
 [====================] 100% | 15.2 MB/15.2 MB | 45.6 MB/s | ETA: 0s
@@ -243,11 +260,12 @@ Saved to: document.pdf
 
 Discover warp servers on local network via mDNS.
 
-| Flag | Short | Type | Default | Required | Description |
-|------|-------|------|---------|----------|-------------|
-| `--timeout` | | duration | 3s | No | Discovery timeout |
+| Flag        | Short | Type     | Default | Required | Description       |
+| ----------- | ----- | -------- | ------- | -------- | ----------------- |
+| `--timeout` |       | duration | 3s      | No       | Discovery timeout |
 
 **Examples:**
+
 ```bash
 warp search
 warp search --timeout 5s
@@ -255,6 +273,7 @@ warp search --timeout 100ms
 ```
 
 **Output:**
+
 ```
 Searching for warp services on local network...
 
@@ -278,11 +297,13 @@ Found 2 services:
 Manage configuration file.
 
 **Subcommands:**
+
 - `show` - Display current configuration
 - `edit` - Open config in $EDITOR (defaults to vi)
 - `path` - Show config file location
 
 **Examples:**
+
 ```bash
 warp config show
 warp config edit
@@ -298,12 +319,14 @@ warp config path
 Generate shell completion scripts.
 
 **Subcommands:**
+
 - `bash` - Bash completion
-- `zsh` - Zsh completion  
+- `zsh` - Zsh completion
 - `fish` - Fish completion
 - `powershell` - PowerShell completion
 
 **Examples:**
+
 ```bash
 warp completion bash > /etc/bash_completion.d/warp
 warp completion zsh > /usr/local/share/zsh/site-functions/_warp
@@ -317,21 +340,22 @@ warp completion powershell > warp.ps1
 
 Location: `~/.config/warp/warp.yaml`
 
-| Setting | Type | Default | Description |
-|---------|------|---------|-------------|
-| `default_interface` | string | auto-detect | Network interface to bind |
-| `default_port` | int | 0 (random) | Server port |
-| `buffer_size` | int | 1048576 (1MB) | I/O buffer size in bytes |
-| `max_upload_size` | int64 | 10737418240 (10GB) | Maximum upload size in bytes |
-| `rate_limit_mbps` | float | 0 (unlimited) | Bandwidth limit in Mbps |
-| `cache_size_mb` | int64 | 100 | File cache size in MB |
-| `chunk_size_mb` | int | 2 | Chunk size for parallel uploads |
-| `parallel_workers` | int | 3 | Number of parallel workers |
-| `no_qr` | bool | false | Skip QR code display |
-| `no_checksum` | bool | false | Skip SHA256 verification |
-| `upload_dir` | string | `.` | Default upload directory |
+| Setting             | Type   | Default            | Description                     |
+| ------------------- | ------ | ------------------ | ------------------------------- |
+| `default_interface` | string | auto-detect        | Network interface to bind       |
+| `default_port`      | int    | 0 (random)         | Server port                     |
+| `buffer_size`       | int    | 1048576 (1MB)      | I/O buffer size in bytes        |
+| `max_upload_size`   | int64  | 10737418240 (10GB) | Maximum upload size in bytes    |
+| `rate_limit_mbps`   | float  | 0 (unlimited)      | Bandwidth limit in Mbps         |
+| `cache_size_mb`     | int64  | 100                | File cache size in MB           |
+| `chunk_size_mb`     | int    | 2                  | Chunk size for parallel uploads |
+| `parallel_workers`  | int    | 3                  | Number of parallel workers      |
+| `no_qr`             | bool   | false              | Skip QR code display            |
+| `no_checksum`       | bool   | false              | Skip SHA256 verification        |
+| `upload_dir`        | string | `.`                | Default upload directory        |
 
 **Example:**
+
 ```yaml
 default_interface: ""
 default_port: 0
@@ -379,16 +403,19 @@ warp receive http://host:port/d/token --decrypt
 ```
 
 **Specifications:**
+
 - Algorithm: AES-256-GCM
 - Key Derivation: PBKDF2-SHA256 (100,000 iterations)
 - Salt: 32 bytes (random)
-- Nonce: 12 bytes (random per chunk)
+- Nonce: 12 bytes (8-byte counter + 4-byte random)
+- Chunk Limit: 4,294,967,296 chunks (~8TB at 2MB chunks) with automatic exhaustion protection
 
 ### Metrics
 
 Prometheus metrics at `/metrics` endpoint.
 
 **Key Metrics:**
+
 - `warp_uploads_total`, `warp_downloads_total`
 - `warp_upload_duration_seconds`, `warp_download_duration_seconds`
 - `warp_active_uploads`, `warp_active_downloads`
@@ -396,16 +423,21 @@ Prometheus metrics at `/metrics` endpoint.
 - `warp_cache_hits_total`, `warp_cache_misses_total`
 - `warp_checksum_verifications_total`
 - `warp_websocket_connections`
+- `warp_errors_total` - Error tracking by type and operation
+- `warp_retry_attempts_total` - Retry monitoring
+- `warp_session_duration_seconds` - Session duration histograms
 
 ### Parallel Uploads
 
 Files split into chunks for parallel transfer.
 
 **Defaults:**
+
 - Workers: 3
 - Chunk size: 2 MB
 
 **Configure:**
+
 ```bash
 warp receive http://host:port/d/token --workers 5 --chunk-size 4
 ```
@@ -413,6 +445,7 @@ warp receive http://host:port/d/token --workers 5 --chunk-size 4
 ### Compression
 
 **Automatic Gzip:**
+
 - Applied to text/compressible files
 - Requires client support
 - Minimum size: 1KB
@@ -427,10 +460,12 @@ Directories auto-stream as ZIP with deflate compression.
 In-memory cache for files < 10MB.
 
 **Defaults:**
+
 - Cache size: 100MB
 - Validation: file modification time
 
 **Configure:**
+
 ```bash
 warp send file.zip --cache-size 200
 ```
@@ -449,12 +484,14 @@ warp host --rate-limit 50 -d ./uploads
 Real-time progress with WebSocket updates.
 
 **Terminal:**
+
 ```
 Downloading: file.zip (1.2 GB)
 [============        ] 65% | 780 MB/1.2 GB | 42.3 MB/s | ETA: 10s
 ```
 
 **Web UI:**
+
 - Drag-and-drop
 - Real-time progress bars
 - Speed indicators
@@ -464,21 +501,23 @@ Downloading: file.zip (1.2 GB)
 
 ### Endpoints
 
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/d/{token}` | Download file |
-| POST | `/upload/chunk` | Upload file chunk |
-| GET | `/api/info` | Server and file info |
-| GET | `/ws/progress` | WebSocket progress updates |
-| GET | `/metrics` | Prometheus metrics |
-| GET | `/upload` | Web upload interface |
+| Method | Path            | Description                |
+| ------ | --------------- | -------------------------- |
+| GET    | `/d/{token}`    | Download file              |
+| POST   | `/upload/chunk` | Upload file chunk          |
+| GET    | `/api/info`     | Server and file info       |
+| GET    | `/ws/progress`  | WebSocket progress updates |
+| GET    | `/metrics`      | Prometheus metrics         |
+| GET    | `/upload`       | Web upload interface       |
 
 ### Headers
 
 **Download (`GET /d/{token}`):**
+
 - Response: `X-Checksum-SHA256` - File SHA256 hash
 
 **Upload (`POST /upload/chunk`):**
+
 - Request: `X-Upload-Session` - Session ID
 - Request: `X-Chunk-Index` - Chunk index (0-based)
 - Request: `X-Chunk-Offset` - Byte offset
@@ -488,6 +527,7 @@ Downloading: file.zip (1.2 GB)
 ### Protocol Flow
 
 **Download:**
+
 1. Server generates token, advertises via mDNS
 2. Client discovers or receives URL
 3. Client GET `/d/{token}`
@@ -495,6 +535,7 @@ Downloading: file.zip (1.2 GB)
 5. Client verifies SHA256 checksum
 
 **Upload:**
+
 1. Client generates session ID
 2. Client GET `/api/info`
 3. Client splits file into chunks
@@ -505,40 +546,70 @@ Downloading: file.zip (1.2 GB)
 
 ### Components
 
-| Component | Location | Purpose |
-|-----------|----------|---------|
-| **Server** | `internal/server/` | HTTP server, WebSocket, parallel chunks, zero-copy sendfile (Linux) |
-| **Client** | `internal/client/` | HTTP client, parallel downloads, checksums, progress tracking |
-| **Crypto** | `internal/crypto/` | Token generation, AES-256-GCM, PBKDF2 |
-| **Discovery** | `internal/discovery/` | mDNS/DNS-SD advertisement and browsing |
-| **UI** | `internal/ui/` | Progress bars, QR codes, speed/ETA |
-| **Config** | `internal/config/` | YAML parsing, environment variables |
-| **Metrics** | `internal/metrics/` | Prometheus integration |
-| **Network** | `internal/network/` | Network utilities, IP discovery |
-| **Protocol** | `internal/protocol/` | Protocol handshake |
-| **Logging** | `internal/logging/` | Structured logging |
+| Component     | Location              | Purpose                                                             |
+| ------------- | --------------------- | ------------------------------------------------------------------- |
+| **Server**    | `internal/server/`    | HTTP server, WebSocket, parallel chunks, zero-copy sendfile (Linux) |
+| **Client**    | `internal/client/`    | HTTP client, parallel downloads, checksums, progress tracking       |
+| **Crypto**    | `internal/crypto/`    | Token generation, AES-256-GCM, PBKDF2                               |
+| **Discovery** | `internal/discovery/` | mDNS/DNS-SD advertisement and browsing                              |
+| **UI**        | `internal/ui/`        | Progress bars, QR codes, speed/ETA                                  |
+| **Config**    | `internal/config/`    | YAML parsing, environment variables                                 |
+| **Metrics**   | `internal/metrics/`   | Prometheus integration                                              |
+| **Network**   | `internal/network/`   | Network utilities, IP discovery                                     |
+| **Protocol**  | `internal/protocol/`  | Protocol handshake                                                  |
+| **Logging**   | `internal/logging/`   | Structured logging                                                  |
 
 ### Project Structure
 
 ```
 warp/
-├── cmd/warp/main.go           # CLI entry point
+├── cmd/warp/main.go                  # CLI entry point
 ├── internal/
-│   ├── client/                # Download client
-│   ├── server/                # HTTP server
-│   │   ├── http.go
-│   │   ├── http_linux.go      # Zero-copy sendfile
-│   │   ├── static/upload.html # Web UI
-│   │   └── zip.go             # Directory compression
-│   ├── crypto/                # Encryption, tokens
-│   ├── discovery/             # mDNS/DNS-SD
-│   ├── network/               # Network utilities
-│   ├── protocol/              # Protocol handshake
-│   ├── ui/                    # Progress, QR codes
-│   ├── config/                # Configuration
-│   ├── metrics/               # Prometheus
-│   └── logging/               # Logging
-├── test/e2e_test.go           # End-to-end tests
+│   ├── client/                       # Download client
+│   │   ├── receiver.go               # HTTP client with dependency injection
+│   │   ├── receiver_test.go
+│   │   ├── uploader.go               # Parallel uploader with buffer pooling
+│   │   └── uploader_test.go
+│   ├── server/                       # HTTP server
+│   │   ├── http.go                   # Core server with rate limiting, TCP tuning
+│   │   ├── http_linux.go             # Zero-copy sendfile (offset fix)
+│   │   ├── http_other.go             # Non-Linux fallback
+│   │   ├── constants.go              # Configuration constants
+│   │   ├── zip.go                    # Directory compression
+│   │   ├── server_test.go
+│   │   ├── leak_test.go              # Goroutine leak tests
+│   │   ├── fuzz_test.go              # Fuzz testing (239K+ iterations)
+│   │   └── static/upload.html        # Web UI
+│   ├── crypto/                       # Encryption, tokens
+│   │   ├── encrypt.go                # AES-256-GCM with nonce protection
+│   │   ├── encrypt_test.go
+│   │   ├── encrypt_nonce_test.go     # Nonce exhaustion tests
+│   │   ├── token.go
+│   │   └── token_test.go
+│   ├── discovery/                    # mDNS/DNS-SD (race-free)
+│   │   ├── discovery.go
+│   │   └── discovery_test.go
+│   ├── network/                      # Network utilities
+│   │   ├── ip.go
+│   │   └── ip_test.go
+│   ├── protocol/                     # Protocol handshake
+│   │   ├── handshake.go
+│   │   └── handshake_test.go
+│   ├── ui/                           # Progress, QR codes
+│   │   ├── progress.go               # Pre-computed progress bars
+│   │   ├── qr.go
+│   │   └── ui_test.go
+│   ├── config/                       # Configuration with error handling
+│   │   ├── config.go
+│   │   └── config_test.go
+│   ├── metrics/                      # Prometheus (errors, retries, duration)
+│   │   ├── metrics.go
+│   │   └── metrics_test.go
+│   └── logging/                      # Lazy initialization logging
+│       ├── logger.go
+│       └── logger_test.go
+├── test/e2e_test.go                  # End-to-end tests
+├── CHANGELOG.md                      # Version history
 ├── go.mod
 └── README.md
 ```
@@ -562,11 +633,23 @@ GOOS=windows GOARCH=amd64 go build -o warp-windows.exe ./cmd/warp
 # All tests
 go test ./...
 
+# With race detector (recommended)
+go test -race ./...
+
 # With coverage
 go test -cover ./...
 
 # Specific package
 go test -v ./internal/crypto
+
+# Fuzz testing (filename sanitization)
+go test -fuzz=FuzzSanitizeFilename -fuzztime=30s ./internal/server/
+
+# Leak detection tests
+go test -v -run TestServer_NoGoroutineLeaks ./internal/server/
+
+# Nonce exhaustion tests
+go test -v -run TestEncryptReader_NonceExhaustion ./internal/crypto/
 
 # End-to-end
 go test -v ./test
@@ -575,6 +658,13 @@ go test -v ./test
 go test -coverprofile=coverage.out ./...
 go tool cover -html=coverage.out
 ```
+
+**Test Suite:**
+
+- **Security:** Nonce exhaustion protection, filename sanitization (fuzz-tested with 239K+ iterations)
+- **Reliability:** Goroutine leak detection, rate limiter cleanup, checksum cache validation
+- **Concurrency:** Race detector clean across all packages
+- **Quality:** Comprehensive unit tests, integration tests, end-to-end tests
 
 ### Code Quality
 
