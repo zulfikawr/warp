@@ -283,10 +283,14 @@ func sendCmd(args []string) {
 	cacheSize := fs.Int64("cache-size", 100, "file cache size in MB")
 	verbose := fs.Bool("verbose", false, "verbose logging")
 	fs.BoolVar(verbose, "v", false, "")
-	fs.Parse(args)
+	if err := fs.Parse(args); err != nil {
+		log.Fatal(err)
+	}
 
 	tok, err := crypto.GenerateToken(nil)
-	if err != nil { log.Fatal(err) }
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	var srv *server.Server
 
@@ -296,7 +300,9 @@ func sendCmd(args []string) {
 	} else if *stdin {
 		// Read from stdin
 		data, err := io.ReadAll(os.Stdin)
-		if err != nil { log.Fatal(err) }
+		if err != nil {
+			log.Fatal(err)
+		}
 		srv = &server.Server{InterfaceName: *iface, Token: tok, TextContent: string(data)}
 	} else {
 		// Handle file/directory
@@ -306,20 +312,20 @@ func sendCmd(args []string) {
 		path := fs.Arg(0)
 		srv = &server.Server{
 			InterfaceName: *iface,
-			Token: tok,
-			SrcPath: path,
+			Token:         tok,
+			SrcPath:       path,
 		}
 	}
-	
+
 	// Apply optional configurations
-	if srv != nil {
-		srv.RateLimitMbps = *rateLimit
-		srv.MaxCacheSize = *cacheSize * 1024 * 1024 // Convert MB to bytes
-	}
+	srv.RateLimitMbps = *rateLimit
+	srv.MaxCacheSize = *cacheSize * 1024 * 1024 // Convert MB to bytes
 
 	url, err := srv.Start()
-	if err != nil { log.Fatal(err) }
-	defer srv.Shutdown()
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer func() { _ = srv.Shutdown() }()
 
 	// Display server info
 	fmt.Fprintf(os.Stderr, "Server started on :%d\n", srv.Port)
@@ -354,22 +360,26 @@ func receiveCmd(args []string) {
 	noChecksum := fs.Bool("no-checksum", false, "skip checksum verification")
 	verbose := fs.Bool("verbose", false, "verbose logging")
 	fs.BoolVar(verbose, "v", false, "")
-	fs.Parse(args)
-	
+	if err := fs.Parse(args); err != nil {
+		log.Fatal(err)
+	}
+
 	if fs.NArg() < 1 {
 		log.Fatal("receive requires a URL")
 	}
 	url := fs.Arg(0)
-	
+
 	if *verbose {
 		fmt.Printf("Configuration: workers=%d, chunk-size=%dMB, checksum=%v\n",
 			*workers, *chunkSizeMB, !*noChecksum)
 	}
-	
+
 	// Note: Workers and chunk-size are for future client-side parallel downloads
 	// Currently used by server-side parallel uploads via HTML client
 	file, err := client.Receive(url, *out, *force, os.Stdout)
-	if err != nil { log.Fatal(err) }
+	if err != nil {
+		log.Fatal(err)
+	}
 	if file == "(stdout)" {
 		// Text was output to stdout, just print newline
 		fmt.Println()
@@ -388,7 +398,9 @@ func hostCmd(args []string) {
 	rateLimit := fs.Float64("rate-limit", 0, "bandwidth limit in Mbps")
 	verbose := fs.Bool("verbose", false, "verbose logging")
 	fs.BoolVar(verbose, "v", false, "")
-	fs.Parse(args)
+	if err := fs.Parse(args); err != nil {
+		log.Fatal(err)
+	}
 
 	// Ensure destination exists
 	if err := os.MkdirAll(*dest, 0o755); err != nil {
@@ -396,20 +408,24 @@ func hostCmd(args []string) {
 	}
 
 	tok, err := crypto.GenerateToken(nil)
-	if err != nil { log.Fatal(err) }
+	if err != nil {
+		log.Fatal(err)
+	}
 	srv := &server.Server{
 		InterfaceName: *iface,
-		Token: tok,
-		HostMode: true,
-		UploadDir: *dest,
+		Token:         tok,
+		HostMode:      true,
+		UploadDir:     *dest,
 	}
-	
+
 	// Apply optional configurations
 	srv.RateLimitMbps = *rateLimit
-	
+
 	url, err := srv.Start()
-	if err != nil { log.Fatal(err) }
-	defer srv.Shutdown()
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer func() { _ = srv.Shutdown() }()
 
 	fmt.Fprintf(os.Stderr, "Hosting uploads to '%s'\n", *dest)
 	fmt.Fprintf(os.Stderr, "Token: %s\n", tok)
@@ -436,7 +452,9 @@ func searchCmd(args []string) {
 	fs := flag.NewFlagSet("search", flag.ExitOnError)
 	fs.Usage = searchHelp
 	timeout := fs.Duration("timeout", 3*time.Second, "discovery timeout")
-	fs.Parse(args)
+	if err := fs.Parse(args); err != nil {
+		log.Fatal(err)
+	}
 
 	fmt.Println("Searching for warp services on local network...")
 	fmt.Println()
@@ -503,9 +521,9 @@ func configCmd(args []string) {
 		if editor == "" {
 			editor = "vi"
 		}
-		
+
 		configPath := config.GetConfigPath()
-		
+
 		// Create config file if it doesn't exist
 		if _, err := os.Stat(configPath); os.IsNotExist(err) {
 			cfg := config.DefaultConfig()
@@ -514,7 +532,7 @@ func configCmd(args []string) {
 			}
 			fmt.Printf("Created new config file at: %s\n", configPath)
 		}
-		
+
 		// Open editor
 		cmd := fmt.Sprintf("%s %s", editor, configPath)
 		fmt.Printf("Opening %s...\n", configPath)

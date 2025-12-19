@@ -12,7 +12,11 @@ func TestProgressReaderPercentages(t *testing.T) {
 	pr := &ProgressReader{R: buf, Total: int64(len(data)), Out: out}
 	b := make([]byte, 50)
 	_, _ = pr.Read(b)
-	if pr.Current != 50 { t.Fatalf("Current=%d want 50", pr.Current) }
+	if pr.Current != 50 {
+		t.Fatalf("Current=%d want 50", pr.Current)
+	}
 	_, _ = pr.Read(b)
-	if pr.Current != 100 { t.Fatalf("Current=%d want 100", pr.Current) }
+	if pr.Current != 100 {
+		t.Fatalf("Current=%d want 100", pr.Current)
+	}
 }

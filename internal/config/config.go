@@ -26,14 +26,14 @@ type Config struct {
 // DefaultConfig returns the default configuration
 func DefaultConfig() *Config {
 	return &Config{
-		DefaultInterface: "",         // auto-detect
-		DefaultPort:      0,          // random
-		BufferSize:       1048576,    // 1MB
+		DefaultInterface: "",          // auto-detect
+		DefaultPort:      0,           // random
+		BufferSize:       1048576,     // 1MB
 		MaxUploadSize:    10737418240, // 10GB
-		RateLimitMbps:    0,          // no limit
-		CacheSizeMB:      100,        // 100MB
-		ChunkSizeMB:      2,          // 2MB
-		ParallelWorkers:  3,          // 3 workers
+		RateLimitMbps:    0,           // no limit
+		CacheSizeMB:      100,         // 100MB
+		ChunkSizeMB:      2,           // 2MB
+		ParallelWorkers:  3,           // 3 workers
 		NoQR:             false,
 		NoChecksum:       false,
 		UploadDir:        ".",

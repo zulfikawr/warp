@@ -2,7 +2,6 @@ package server
 
 import (
 	"io"
-	"io/ioutil"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -13,82 +12,102 @@ import (
 )
 
 func TestServerValidAndInvalidToken(t *testing.T) {
-	tmpFile, err := ioutil.TempFile("", "warp-test")
-	if err != nil { t.Fatal(err) }
-	defer os.Remove(tmpFile.Name())
+	tmpFile, err := os.CreateTemp("", "warp-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Remove(tmpFile.Name()) }()
 	_, _ = tmpFile.Write([]byte("hello"))
 	_ = tmpFile.Close()
 
 	tok, _ := crypto.GenerateToken(nil)
 	s := &Server{Token: tok, SrcPath: tmpFile.Name()}
 	url, err := s.Start()
-	if err != nil { t.Fatal(err) }
-	defer s.Shutdown()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = s.Shutdown() }()
 
 	// Valid token
 	resp, err := http.Get(url)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 
 	// Invalid token
-	resp2, err := http.Get(url+"x")
-	if err != nil { t.Fatal(err) }
+	resp2, err := http.Get(url + "x")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if resp2.StatusCode != http.StatusForbidden {
 		t.Fatalf("status = %d, want 403", resp2.StatusCode)
 	}
-	resp2.Body.Close()
+	_ = resp2.Body.Close()
 }
 
 func TestServerHealthEndpoint(t *testing.T) {
-	tmpFile, err := ioutil.TempFile("", "warp-test")
-	if err != nil { t.Fatal(err) }
-	defer os.Remove(tmpFile.Name())
-	
+	tmpFile, err := os.CreateTemp("", "warp-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Remove(tmpFile.Name()) }()
+
 	tok, _ := crypto.GenerateToken(nil)
 	s := &Server{Token: tok, SrcPath: tmpFile.Name()}
 	url, err := s.Start()
-	if err != nil { t.Fatal(err) }
-	defer s.Shutdown()
-	
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = s.Shutdown() }()
+
 	// Extract base URL
 	baseURL := url[:len(url)-len(tok)-3] // Remove /d/{token}
-	
+
 	// Test health endpoint
 	resp, err := http.Get(baseURL + "/health")
-	if err != nil { t.Fatal(err) }
-	defer resp.Body.Close()
-	
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("health status = %d, want 200", resp.StatusCode)
 	}
 }
 
 func TestServerMetricsEndpoint(t *testing.T) {
-	tmpFile, err := ioutil.TempFile("", "warp-test")
-	if err != nil { t.Fatal(err) }
-	defer os.Remove(tmpFile.Name())
-	
+	tmpFile, err := os.CreateTemp("", "warp-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Remove(tmpFile.Name()) }()
+
 	tok, _ := crypto.GenerateToken(nil)
 	s := &Server{Token: tok, SrcPath: tmpFile.Name()}
 	url, err := s.Start()
-	if err != nil { t.Fatal(err) }
-	defer s.Shutdown()
-	
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = s.Shutdown() }()
+
 	// Extract base URL
 	baseURL := url[:len(url)-len(tok)-3]
-	
+
 	// Test metrics endpoint
 	resp, err := http.Get(baseURL + "/metrics")
-	if err != nil { t.Fatal(err) }
-	defer resp.Body.Close()
-	
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("metrics status = %d, want 200", resp.StatusCode)
 	}
-	
+
 	// Verify it contains Prometheus metrics
 	body, _ := io.ReadAll(resp.Body)
 	bodyStr := string(body)
@@ -99,27 +118,31 @@ func TestServerMetricsEndpoint(t *testing.T) {
 
 func TestHostMode(t *testing.T) {
 	tmpDir := t.TempDir()
-	
+
 	tok, _ := crypto.GenerateToken(nil)
 	s := &Server{
 		Token:     tok,
 		HostMode:  true,
 		UploadDir: tmpDir,
 	}
-	
+
 	url, err := s.Start()
-	if err != nil { t.Fatal(err) }
-	defer s.Shutdown()
-	
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = s.Shutdown() }()
+
 	// Test GET returns HTML form
 	resp, err := http.Get(url)
-	if err != nil { t.Fatal(err) }
-	defer resp.Body.Close()
-	
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("GET status = %d, want 200", resp.StatusCode)
 	}
-	
+
 	body, _ := io.ReadAll(resp.Body)
 	if len(body) < 100 {
 		t.Error("HTML response too short")
@@ -137,7 +160,7 @@ func TestFormatBytes(t *testing.T) {
 		{1048576, "1.0 MB"},
 		{1073741824, "1.0 GB"},
 	}
-	
+
 	for _, tt := range tests {
 		got := formatBytes(tt.bytes)
 		if got != tt.want {
@@ -159,7 +182,7 @@ func TestSanitizeFilename(t *testing.T) {
 		{"file\x00.txt", true}, // null byte
 		{"file\n.txt", true},   // newline
 	}
-	
+
 	for _, tt := range tests {
 		result, err := sanitizeFilename(tt.input)
 		if tt.wantError {
@@ -179,19 +202,19 @@ func TestSanitizeFilename(t *testing.T) {
 
 func TestFindUniqueFilename(t *testing.T) {
 	tmpDir := t.TempDir()
-	
+
 	// Create a file
 	existingFile := filepath.Join(tmpDir, "test.txt")
 	if err := os.WriteFile(existingFile, []byte("test"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	
+
 	// First call should return the original name with (1) suffix
 	unique := findUniqueFilename(tmpDir, "test.txt")
 	if unique == existingFile {
 		t.Error("Expected unique filename, got same as existing")
 	}
-	
+
 	// Should contain " (1)" before extension
 	expected := filepath.Join(tmpDir, "test (1).txt")
 	if unique != expected {
@@ -201,15 +224,15 @@ func TestFindUniqueFilename(t *testing.T) {
 
 func TestGetOptimalBufferSize(t *testing.T) {
 	tests := []struct {
-		fileSize   int64
-		wantSize   int
+		fileSize int64
+		wantSize int
 	}{
-		{1000, 8192},           // Small file
-		{100000, 65536},        // Medium file
-		{10*1024*1024, 1048576},    // Large file
-		{500*1024*1024, 4194304},   // Very large file
+		{1000, 8192},                 // Small file
+		{100000, 65536},              // Medium file
+		{10 * 1024 * 1024, 1048576},  // Large file
+		{500 * 1024 * 1024, 4194304}, // Very large file
 	}
-	
+
 	for _, tt := range tests {
 		got := getOptimalBufferSize(tt.fileSize)
 		if got != tt.wantSize {
@@ -233,7 +256,7 @@ func TestIsCompressible(t *testing.T) {
 		{"file.mp4", false},
 		{"file.zip", false},
 	}
-	
+
 	for _, tt := range tests {
 		got := isCompressible(tt.path)
 		if got != tt.want {
@@ -244,12 +267,12 @@ func TestIsCompressible(t *testing.T) {
 
 func TestChunkStat(t *testing.T) {
 	cs := &chunkStat{}
-	
+
 	d1 := cs.add(100 * time.Millisecond)
 	if d1 != 100*time.Millisecond {
 		t.Errorf("First add returned %v, want 100ms", d1)
 	}
-	
+
 	d2 := cs.add(50 * time.Millisecond)
 	if d2 != 150*time.Millisecond {
 		t.Errorf("Second add returned %v, want 150ms", d2)

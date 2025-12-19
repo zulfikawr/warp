@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.2] - 2025-12-18
+
+### Fixed
+- Fixed all errcheck linting issues across the codebase for improved error handling
+- Fixed unused parameter warnings in platform-specific implementations
+- Fixed ineffectual assignments and nil checks
+- Removed obsolete build tags
+
+### Added
+- Integrated chunk tracking for performance monitoring via `chunkTimes` field
+- Added rate limiting support for downloads using `RateLimitedWriter`
+- Added `getRateLimiter()` and `getClientIP()` methods for bandwidth control
+- Enhanced metrics integration for chunk uploads and rate limiting
+
+### Changed
+- Improved error handling throughout client and server code
+- Enhanced test suite with proper error checking in all test cases
+- Rewrite README.md
+
 ## [1.0.1] - 2025-12-18
 
 ### Fixed

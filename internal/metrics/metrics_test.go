@@ -104,7 +104,7 @@ func TestChunkMetrics(t *testing.T) {
 func TestChecksumMetrics(t *testing.T) {
 	// Record checksum verification
 	ChecksumVerifications.WithLabelValues("match").Inc()
-	
+
 	// Verify counter increased
 	count := testutil.ToFloat64(ChecksumVerifications.WithLabelValues("match"))
 	if count < 1 {

@@ -1,5 +1,4 @@
 //go:build linux
-// +build linux
 
 package server
 
@@ -18,68 +17,69 @@ import (
 func sendfileZeroCopy(w http.ResponseWriter, f *os.File, offset int64, length int64) error {
 	// Get checksum header if it was set
 	checksumHeader := w.Header().Get("X-Content-SHA256")
-	
+
 	// Try to hijack the connection to get the underlying socket
 	hijacker, ok := w.(http.Hijacker)
 	if !ok {
 		return errors.New("hijacking not supported")
 	}
-	
+
 	conn, bufrw, err := hijacker.Hijack()
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
-	
+	defer func() { _ = conn.Close() }()
+
 	// Write HTTP response headers manually
 	headers := fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Length: %d\r\nContent-Type: application/octet-stream\r\n", length)
 	if checksumHeader != "" {
 		headers += fmt.Sprintf("X-Content-SHA256: %s\r\n", checksumHeader)
 	}
 	headers += "\r\n"
-	
+
 	if _, err := bufrw.WriteString(headers); err != nil {
 		return err
 	}
 	if err := bufrw.Flush(); err != nil {
 		return err
 	}
-	
+
 	// Get the raw connection file descriptor
 	tcpConn, ok := conn.(*net.TCPConn)
 	if !ok {
 		return errors.New("not a TCP connection")
 	}
-	
+
 	rawConn, err := tcpConn.SyscallConn()
 	if err != nil {
 		return err
 	}
-	
+
 	// Use sendfile(2) syscall for kernel-level zero-copy transfer
 	var sendErr error
 	var totalSent int64
-	
+
 	err = rawConn.Write(func(socketFD uintptr) bool {
 		for totalSent < length {
 			remaining := length - totalSent
 			currentOffset := offset + totalSent
-			
+
 			// sendfile can transfer up to ~2GB at a time
 			chunkSize := remaining
 			if chunkSize > 1<<30 { // 1GB chunks
 				chunkSize = 1 << 30
 			}
-			
-			n, sendErr := syscall.Sendfile(int(socketFD), int(f.Fd()), &currentOffset, int(chunkSize))
-			if sendErr != nil {
-				if sendErr == syscall.EAGAIN {
+
+			n, err := syscall.Sendfile(int(socketFD), int(f.Fd()), &currentOffset, int(chunkSize))
+			if err != nil {
+				if err == syscall.EAGAIN {
 					// Would block, try again
 					continue
 				}
+				sendErr = err
 				return false
 			}
-			
+
 			totalSent += int64(n)
 			if n == 0 && totalSent < length {
 				// EOF before expected length
@@ -89,14 +89,14 @@ func sendfileZeroCopy(w http.ResponseWriter, f *os.File, offset int64, length in
 		}
 		return true
 	})
-	
+
 	if err != nil {
 		return err
 	}
 	if sendErr != nil {
 		return sendErr
 	}
-	
+
 	return nil
 }
 

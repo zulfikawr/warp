@@ -3,7 +3,7 @@ package protocol
 import "time"
 
 const (
-	PathPrefix = "/d/"
+	PathPrefix       = "/d/"
 	UploadPathPrefix = "/u/"
 )
 

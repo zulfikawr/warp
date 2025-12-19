@@ -31,9 +31,9 @@ type UploadConfig struct {
 func DefaultUploadConfig() *UploadConfig {
 	return &UploadConfig{
 		ChunkSize:      2 * 1024 * 1024, // 2MB chunks
-		MaxConcurrent:  3,                // 3 parallel workers
-		RetryAttempts:  3,                // 3 retries
-		RetryDelay:     1 * time.Second,  // 1s between retries
+		MaxConcurrent:  3,               // 3 parallel workers
+		RetryAttempts:  3,               // 3 retries
+		RetryDelay:     1 * time.Second, // 1s between retries
 		ProgressWriter: nil,
 	}
 }
@@ -80,7 +80,7 @@ func NewUploadSession(url, filepath string, config *UploadConfig) (*UploadSessio
 
 	stat, err := file.Stat()
 	if err != nil {
-		file.Close()
+		_ = file.Close()
 		return nil, fmt.Errorf("failed to stat file: %w", err)
 	}
 
@@ -122,14 +122,14 @@ func NewUploadSession(url, filepath string, config *UploadConfig) (*UploadSessio
 func generateSessionID(filepath string, size int64) string {
 	h := sha256.New()
 	h.Write([]byte(filepath))
-	h.Write([]byte(fmt.Sprintf("%d", size)))
+	_, _ = fmt.Fprintf(h, "%d", size)
 	h.Write([]byte(time.Now().Format(time.RFC3339Nano)))
 	return hex.EncodeToString(h.Sum(nil))[:16]
 }
 
 // Upload performs the parallel upload with configurable concurrency
 func (s *UploadSession) Upload(ctx context.Context) error {
-	defer s.File.Close()
+	defer func() { _ = s.File.Close() }()
 
 	// Create cancellable context
 	ctx, cancel := context.WithCancel(ctx)
@@ -275,7 +275,7 @@ func (s *UploadSession) sendChunk(ctx context.Context, chunk chunkInfo, data []b
 	if err != nil {
 		return fmt.Errorf("send request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
@@ -348,7 +348,7 @@ func (s *UploadSession) getProgress() (completed, total int, bytesUploaded, byte
 func (s *UploadSession) reportProgress() {
 	for range s.progressTicker.C {
 		completed, total, bytesUploaded, bytesTotal, speed := s.getProgress()
-		
+
 		pct := float64(bytesUploaded) / float64(bytesTotal) * 100
 		barWidth := 20
 		filled := int(pct / 5)
@@ -363,7 +363,7 @@ func (s *UploadSession) reportProgress() {
 			bar += " "
 		}
 
-		fmt.Fprintf(s.Config.ProgressWriter, "\r[%s] %3.0f%% | %s / %s | %.1f Mbps | Chunks: %d/%d",
+		_, _ = fmt.Fprintf(s.Config.ProgressWriter, "\r[%s] %3.0f%% | %s / %s | %.1f Mbps | Chunks: %d/%d",
 			bar, pct,
 			formatBytes(bytesUploaded), formatBytes(bytesTotal),
 			speed,
@@ -376,7 +376,7 @@ func (s *UploadSession) printFinalProgress() {
 	completed, total, bytesUploaded, bytesTotal, speed := s.getProgress()
 	duration := time.Since(s.startTime).Seconds()
 
-	fmt.Fprintf(s.Config.ProgressWriter, "\r[====================] 100%% | %s / %s | %.1f Mbps | %.2fs | Chunks: %d/%d\n",
+	_, _ = fmt.Fprintf(s.Config.ProgressWriter, "\r[====================] 100%% | %s / %s | %.1f Mbps | %.2fs | Chunks: %d/%d\n",
 		formatBytes(bytesUploaded), formatBytes(bytesTotal),
 		speed, duration,
 		completed, total)

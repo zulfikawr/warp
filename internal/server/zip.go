@@ -10,7 +10,7 @@ import (
 // ZipDirectory streams a zip of srcDir to w.
 func ZipDirectory(w io.Writer, srcDir string) error {
 	zw := zip.NewWriter(w)
-	defer zw.Close()
+	defer func() { _ = zw.Close() }()
 	return filepath.Walk(srcDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err

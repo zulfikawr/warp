@@ -13,7 +13,7 @@ func init() {
 	config.Encoding = "console"
 	config.DisableStacktrace = true
 	config.DisableCaller = true
-	
+
 	var err error
 	logger, err = config.Build()
 	if err != nil {

@@ -94,7 +94,7 @@ func TestEncryptDecryptWithWrongKey(t *testing.T) {
 
 func TestDecryptInvalidCiphertext(t *testing.T) {
 	key := make([]byte, KeySize)
-	
+
 	// Too short ciphertext
 	_, err := Decrypt([]byte("short"), key)
 	if err == nil {
@@ -149,7 +149,7 @@ func TestEncryptReader(t *testing.T) {
 
 func TestEncryptReaderLargeData(t *testing.T) {
 	key := make([]byte, KeySize)
-	
+
 	// Create 1MB of test data
 	plaintext := make([]byte, 1024*1024)
 	for i := range plaintext {
@@ -245,7 +245,7 @@ func TestDecryptReaderWithWrongKey(t *testing.T) {
 	}
 
 	var encrypted bytes.Buffer
-	io.Copy(&encrypted, encReader)
+	_, _ = io.Copy(&encrypted, encReader)
 
 	// Try to decrypt with key2
 	decReader, err := NewDecryptReader(&encrypted, key2)

@@ -1,13 +1,13 @@
 package crypto
 
 import (
-	"testing"
 	"crypto/rand"
+	"testing"
 )
 
 func TestGenerateTokenUniquenessAndLength(t *testing.T) {
 	seen := make(map[string]struct{})
-	for i := 0; i < 1000; i++ {
+	for range 1000 {
 		tok, err := GenerateToken(rand.Reader)
 		if err != nil {
 			t.Fatalf("error generating token: %v", err)

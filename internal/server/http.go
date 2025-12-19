@@ -104,17 +104,17 @@ func computeFileChecksum(filePath string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer f.Close()
-	
+	defer func() { _ = f.Close() }()
+
 	hash := sha256.New()
 	bufSize := 1048576 // 1MB buffer for checksum computation
 	buf := getBuffer(bufSize)
 	defer putBuffer(buf)
-	
+
 	if _, err := io.CopyBuffer(hash, f, *buf); err != nil {
 		return "", err
 	}
-	
+
 	return hex.EncodeToString(hash.Sum(nil)), nil
 }
 
@@ -138,24 +138,22 @@ type Server struct {
 	Token         string
 	SrcPath       string
 	// Host mode (reverse drop)
-	HostMode      bool
-	UploadDir     string
-	TextContent   string // If set, serves text instead of file
-	IP            net.IP // Server's IP address (exported for CLI display)
-	Port          int
-	httpServer    *http.Server
-	advertiser    *discovery.Advertiser
-	chunkTimes    sync.Map // filename -> *chunkStat
+	HostMode       bool
+	UploadDir      string
+	TextContent    string // If set, serves text instead of file
+	IP             net.IP // Server's IP address (exported for CLI display)
+	Port           int
+	httpServer     *http.Server
+	advertiser     *discovery.Advertiser
+	chunkTimes     sync.Map // filename -> *chunkStat
 	uploadSessions sync.Map // sessionID -> *uploadSession
 	// Progress tracking for WebSocket updates
 	activeUploads sync.Map // filename -> *ProgressTracker
 	// Rate limiting (exported for CLI configuration)
-	RateLimitMbps float64 // 0 = no limit
+	RateLimitMbps float64  // 0 = no limit
 	rateLimiters  sync.Map // clientIP -> *rate.Limiter
 	// File caching (exported for CLI configuration)
-	MaxCacheSize   int64 // max cache size in bytes (default 100MB)
-	fileCache      sync.Map // filePath -> *CachedFile
-	cacheSizeBytes int64 // atomic counter
+	MaxCacheSize int64 // max cache size in bytes (default 100MB)
 	// Encryption (exported for CLI configuration)
 	Password       string // If set, enables encryption
 	EncryptionSalt []byte // Salt for key derivation
@@ -163,74 +161,11 @@ type Server struct {
 
 // CachedFile represents a cached file in memory
 type CachedFile struct {
-	Data      []byte
-	ModTime   time.Time
-	ETag      string
-	Size      int64
-	CachedAt  time.Time
-}
-
-// getCachedFile retrieves a file from cache, validating freshness
-func (s *Server) getCachedFile(path string) (*CachedFile, bool) {
-	val, ok := s.fileCache.Load(path)
-	if !ok {
-		metrics.CacheMisses.Inc()
-		return nil, false
-	}
-	
-	cached := val.(*CachedFile)
-	
-	// Validate cache freshness
-	fi, err := os.Stat(path)
-	if err != nil || !fi.ModTime().Equal(cached.ModTime) {
-		// File changed or doesn't exist, invalidate cache
-		s.fileCache.Delete(path)
-		atomic.AddInt64(&s.cacheSizeBytes, -cached.Size)
-		metrics.CacheSize.Set(float64(atomic.LoadInt64(&s.cacheSizeBytes)))
-		metrics.CacheMisses.Inc()
-		return nil, false
-	}
-	
-	metrics.CacheHits.Inc()
-	return cached, true
-}
-
-// cacheFile adds a file to cache if it's small enough
-func (s *Server) cacheFile(path string, data []byte, modTime time.Time) {
-	if s.MaxCacheSize == 0 {
-		s.MaxCacheSize = 100 * 1024 * 1024 // Default 100MB
-	}
-	
-	size := int64(len(data))
-	
-	// Only cache files smaller than 10MB
-	if size > 10*1024*1024 {
-		return
-	}
-	
-	// Check if adding this would exceed cache limit
-	currentSize := atomic.LoadInt64(&s.cacheSizeBytes)
-	if currentSize+size > s.MaxCacheSize {
-		// Simple eviction: clear entire cache if too full
-		// In production, use proper LRU eviction
-		s.fileCache.Range(func(key, value interface{}) bool {
-			s.fileCache.Delete(key)
-			return true
-		})
-		atomic.StoreInt64(&s.cacheSizeBytes, 0)
-	}
-	
-	cached := &CachedFile{
-		Data:     data,
-		ModTime:  modTime,
-		ETag:     fmt.Sprintf("%d-%d", modTime.Unix(), size),
-		Size:     size,
-		CachedAt: time.Now(),
-	}
-	
-	s.fileCache.Store(path, cached)
-	atomic.AddInt64(&s.cacheSizeBytes, size)
-	metrics.CacheSize.Set(float64(atomic.LoadInt64(&s.cacheSizeBytes)))
+	Data     []byte
+	ModTime  time.Time
+	ETag     string
+	Size     int64
+	CachedAt time.Time
 }
 
 // RateLimitedWriter wraps an io.Writer with rate limiting
@@ -254,18 +189,20 @@ func (s *Server) getRateLimiter(clientIP string) *rate.Limiter {
 	if s.RateLimitMbps <= 0 {
 		return nil // No rate limiting
 	}
-	
+
 	if lim, ok := s.rateLimiters.Load(clientIP); ok {
 		return lim.(*rate.Limiter)
 	}
-	
+
 	// Convert Mbps to bytes per second
 	bytesPerSecond := (s.RateLimitMbps * 1_000_000) / 8
-	burst := int(bytesPerSecond / 10) // 100ms burst
-	if burst < 4096 {
-		burst = 4096 // Minimum 4KB burst
-	}
-	
+	burst := max(
+		// 100ms burst
+		int(bytesPerSecond/10),
+		// Minimum 4KB burst
+		4096,
+	)
+
 	lim := rate.NewLimiter(rate.Limit(bytesPerSecond), burst)
 	s.rateLimiters.Store(clientIP, lim)
 	return lim
@@ -280,13 +217,13 @@ func getClientIP(r *http.Request) string {
 		ips := strings.Split(forwarded, ",")
 		return strings.TrimSpace(ips[0])
 	}
-	
+
 	// Check X-Real-IP header
 	realIP := r.Header.Get("X-Real-IP")
 	if realIP != "" {
 		return realIP
 	}
-	
+
 	// Use RemoteAddr
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
@@ -308,22 +245,22 @@ type ProgressTracker struct {
 func (pt *ProgressTracker) GetProgress() map[string]interface{} {
 	bytesWritten := atomic.LoadInt64(&pt.BytesWritten)
 	elapsed := time.Since(pt.StartTime).Seconds()
-	
+
 	var mbps float64
 	if elapsed > 0 {
 		mbps = (float64(bytesWritten) * 8) / (elapsed * 1_000_000)
 	}
-	
+
 	percentage := float64(0)
 	if pt.TotalSize > 0 {
 		percentage = (float64(bytesWritten) / float64(pt.TotalSize)) * 100
 	}
-	
+
 	return map[string]interface{}{
-		"filename":      pt.Filename,
-		"total_size":    pt.TotalSize,
-		"bytes_written": bytesWritten,
-		"percentage":    percentage,
+		"filename":        pt.Filename,
+		"total_size":      pt.TotalSize,
+		"bytes_written":   bytesWritten,
+		"percentage":      percentage,
 		"throughput_mbps": mbps,
 		"elapsed_seconds": elapsed,
 	}
@@ -355,6 +292,14 @@ type chunkStat struct {
 	duration time.Duration
 }
 
+func (c *chunkStat) add(d time.Duration) time.Duration {
+	c.mu.Lock()
+	c.duration += d
+	res := c.duration
+	c.mu.Unlock()
+	return res
+}
+
 // tcpKeepAliveListener sets TCP keepalive and optimizes socket for high throughput
 type tcpKeepAliveListener struct {
 	*net.TCPListener
@@ -366,16 +311,16 @@ func (ln tcpKeepAliveListener) Accept() (net.Conn, error) {
 		return nil, err
 	}
 	// Enable TCP keepalive to detect dead connections
-	tc.SetKeepAlive(true)
-	tc.SetKeepAlivePeriod(3 * time.Minute)
-	
+	_ = tc.SetKeepAlive(true)
+	_ = tc.SetKeepAlivePeriod(3 * time.Minute)
+
 	// Critical: Disable Nagle's algorithm for immediate packet transmission
 	// This eliminates 40-200ms delays waiting for packet coalescing
-	tc.SetNoDelay(true)
-	
+	_ = tc.SetNoDelay(true)
+
 	// Let OS auto-tune TCP window size for optimal throughput
 	// Manual buffer sizing can prevent dynamic scaling
-	
+
 	return tc, nil
 }
 
@@ -433,7 +378,7 @@ func (s *Server) Start() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	
+
 	// Wrap with TCP optimizations
 	tcpListener, ok := ln.(*net.TCPListener)
 	if !ok {
@@ -441,7 +386,7 @@ func (s *Server) Start() (string, error) {
 		return "", fmt.Errorf("expected TCP listener")
 	}
 	optimizedListener := tcpKeepAliveListener{tcpListener}
-	
+
 	addr := optimizedListener.Addr().String() // ip:port
 	parts := strings.Split(addr, ":")
 	if len(parts) < 2 {
@@ -450,7 +395,7 @@ func (s *Server) Start() (string, error) {
 	}
 	portStr := parts[len(parts)-1]
 	var port int
-	fmt.Sscanf(portStr, "%d", &port)
+	_, _ = fmt.Sscanf(portStr, "%d", &port)
 	s.Port = port
 
 	go func() {
@@ -507,15 +452,15 @@ func (s *Server) handleProgressWebSocket(w http.ResponseWriter, r *http.Request)
 		log.Printf("WebSocket upgrade failed: %v", err)
 		return
 	}
-	defer conn.Close()
-	
+	defer func() { _ = conn.Close() }()
+
 	metrics.ActiveWebSocketConnections.Inc()
 	defer metrics.ActiveWebSocketConnections.Dec()
-	
+
 	// Send progress updates every 100ms
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
-	
+
 	for {
 		select {
 		case <-ticker.C:
@@ -526,7 +471,7 @@ func (s *Server) handleProgressWebSocket(w http.ResponseWriter, r *http.Request)
 				progress = append(progress, tracker.GetProgress())
 				return true
 			})
-			
+
 			// Send progress update
 			if len(progress) > 0 {
 				metrics.WebSocketMessagesTotal.WithLabelValues("progress").Inc()
@@ -552,21 +497,21 @@ func (s *Server) handleEncryptInfo(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	
+
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
 	w.Header().Set("Pragma", "no-cache")
 	w.Header().Set("Expires", "0")
-	
+
 	resp := map[string]interface{}{
 		"encrypted": s.Password != "",
 	}
-	
+
 	if s.Password != "" && len(s.EncryptionSalt) > 0 {
 		resp["salt"] = base64.StdEncoding.EncodeToString(s.EncryptionSalt)
 	}
-	
-	json.NewEncoder(w).Encode(resp)
+
+	_ = json.NewEncoder(w).Encode(resp)
 }
 
 // handleManifest advertises upload parameters (chunk size, max concurrency).
@@ -580,8 +525,8 @@ func (s *Server) handleManifest(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Pragma", "no-cache")
 	w.Header().Set("Expires", "0")
 	resp := map[string]interface{}{
-		"chunk_size":    2 * 1024 * 1024, // 2MB default chunk size
-		"max_concurrent": 3,              // parallel workers hint
+		"chunk_size":     2 * 1024 * 1024, // 2MB default chunk size
+		"max_concurrent": 3,               // parallel workers hint
 	}
 	_ = json.NewEncoder(w).Encode(resp)
 }
@@ -594,7 +539,7 @@ func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
 		metrics.ActiveDownloads.Dec()
 		metrics.ActiveTransfers.Dec()
 	}()
-	
+
 	// Expect /d/{token}
 	p := strings.TrimPrefix(r.URL.Path, protocol.PathPrefix)
 	if p != s.Token {
@@ -610,7 +555,7 @@ func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
 		w.Header().Set("Pragma", "no-cache")
 		w.Header().Set("Expires", "0")
-		w.Write([]byte(s.TextContent))
+		_, _ = w.Write([]byte(s.TextContent))
 		return
 	}
 
@@ -629,19 +574,27 @@ func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", filepath.Base(s.SrcPath)))
-	
+
 	// Check if client supports compression and file is compressible
 	acceptsGzip := strings.Contains(r.Header.Get("Accept-Encoding"), "gzip")
 	shouldCompress := acceptsGzip && isCompressible(s.SrcPath) && fi.Size() > 1024 // Only compress files > 1KB
-	
+
 	// Support resumable downloads via Range headers
 	f, err := os.Open(s.SrcPath)
 	if err != nil {
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
-	defer f.Close()
-	
+	defer func() { _ = f.Close() }()
+
+	// Apply rate limiting if configured
+	clientIP := getClientIP(r)
+	var writer io.Writer = w
+	if limiter := s.getRateLimiter(clientIP); limiter != nil {
+		writer = &RateLimitedWriter{w: w, limiter: limiter}
+		metrics.RateLimitedRequests.WithLabelValues(clientIP).Inc()
+	}
+
 	rangeHeader := r.Header.Get("Range")
 	if rangeHeader != "" && strings.HasPrefix(rangeHeader, "bytes=") {
 		// Range requests don't work with compression, serve uncompressed
@@ -654,13 +607,13 @@ func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, fi.Size()-1, fi.Size()))
 				w.Header().Set("Content-Length", fmt.Sprintf("%d", fi.Size()-start))
 				w.WriteHeader(http.StatusPartialContent)
-				io.Copy(w, f)
+				_, _ = io.Copy(writer, f)
 				log.Printf("Resumed download from byte %d for %s", start, filepath.Base(s.SrcPath))
 				return
 			}
 		}
 	}
-	
+
 	// Serve with compression if applicable
 	if shouldCompress {
 		// Compute checksum first
@@ -668,23 +621,23 @@ func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
 		if err == nil {
 			w.Header().Set("X-Content-SHA256", checksum)
 		}
-		
+
 		w.Header().Set("Content-Encoding", "gzip")
 		w.Header().Del("Content-Length") // Let gzip set the length
-		
+
 		// Reset file to beginning
-		f.Seek(0, 0)
-		
-		gzipWriter := gzip.NewWriter(w)
-		io.Copy(gzipWriter, f)
-		gzipWriter.Close()
-		
+		_, _ = f.Seek(0, 0)
+
+		gzipWriter := gzip.NewWriter(writer)
+		_, _ = io.Copy(gzipWriter, f)
+		_ = gzipWriter.Close()
+
 		if checksum != "" {
 			log.Printf("Served %s with gzip compression (SHA256: %s)", filepath.Base(s.SrcPath), checksum[:16]+"...")
 		}
 		return
 	}
-	
+
 	// Use zero-copy sendfile for large binary files on Linux (>10MB and not compressible)
 	if runtime.GOOS == "linux" && fi.Size() > 10*1024*1024 && !isCompressible(s.SrcPath) {
 		// Compute checksum before sending
@@ -692,11 +645,11 @@ func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
 		if err == nil {
 			w.Header().Set("X-Content-SHA256", checksum)
 		}
-		
+
 		// Set headers before attempting sendfile
 		w.Header().Set("Content-Type", "application/octet-stream")
 		w.Header().Set("Content-Length", fmt.Sprintf("%d", fi.Size()))
-		
+
 		if err := sendfileZeroCopy(w, f, 0, fi.Size()); err == nil {
 			if checksum != "" {
 				log.Printf("Served %s using zero-copy sendfile (%s, SHA256: %s)", filepath.Base(s.SrcPath), formatBytes(fi.Size()), checksum[:16]+"...")
@@ -708,31 +661,31 @@ func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
 		// If sendfile fails, fall back to normal method
 		log.Printf("Sendfile failed for %s, falling back to standard copy: %v", filepath.Base(s.SrcPath), err)
 		// Need to reopen file since sendfile may have consumed it
-		f.Close()
+		_ = f.Close()
 		f, err = os.Open(s.SrcPath)
 		if err != nil {
 			http.Error(w, "not found", http.StatusNotFound)
 			return
 		}
-		defer f.Close()
+		defer func() { _ = f.Close() }()
 	}
-	
+
 	// Normal full file download without compression (fallback)
 	// Compute checksum for integrity verification
 	checksum, err := computeFileChecksum(s.SrcPath)
 	if err == nil {
 		w.Header().Set("X-Content-SHA256", checksum)
 	}
-	
+
 	http.ServeFile(w, r, s.SrcPath)
-	
+
 	// Record metrics after successful download
 	duration := time.Since(startTime).Seconds()
 	fileExt := strings.ToLower(filepath.Ext(s.SrcPath))
 	if fileExt == "" {
 		fileExt = "no_ext"
 	}
-	
+
 	metrics.DownloadDuration.WithLabelValues(fileExt).Observe(duration)
 	metrics.DownloadSize.WithLabelValues(fileExt).Observe(float64(fi.Size()))
 	if duration > 0 {
@@ -760,7 +713,7 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 
 	if r.Method == http.MethodGet {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		io.WriteString(w, uploadPageHTML)
+		_, _ = io.WriteString(w, uploadPageHTML)
 		return
 	}
 
@@ -814,7 +767,10 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 
 	requestStart := time.Now()
 
-	type savedInfo struct{ Name string; Size int64 }
+	type savedInfo struct {
+		Name string
+		Size int64
+	}
 	var saved []savedInfo
 
 	// Stream each file part directly to disk
@@ -831,10 +787,10 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 
 		// Skip non-file fields
 		if part.FileName() == "" {
-			part.Close()
+			_ = part.Close()
 			continue
 		}
-		
+
 		// Track active upload
 		metrics.ActiveUploads.Inc()
 		metrics.ActiveTransfers.Inc()
@@ -842,7 +798,7 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		// Sanitize filename to prevent directory traversal
 		name := filepath.Base(part.FileName())
 		if name == "." || name == ".." {
-			part.Close()
+			_ = part.Close()
 			continue
 		}
 
@@ -852,7 +808,7 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		out, err := os.OpenFile(outPath, os.O_CREATE|os.O_WRONLY, 0o600)
 		if err != nil {
 			log.Printf("Failed to create file %s: %v", name, err)
-			part.Close()
+			_ = part.Close()
 			http.Error(w, "write error", http.StatusInternalServerError)
 			return
 		}
@@ -864,7 +820,7 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		buf := *bufPtr
 		n, err := io.CopyBuffer(out, part, buf)
 		cerr := out.Close()
-		part.Close()
+		_ = part.Close()
 
 		if err != nil || cerr != nil {
 			log.Printf("Failed to write file %s: write_err=%v, close_err=%v", name, err, cerr)
@@ -879,7 +835,7 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		}
 		log.Printf("%s, %s received in %.2fs (%.1f Mbps)", filename, formatBytes(n), duration, mbps)
 		saved = append(saved, savedInfo{Name: filename, Size: n})
-		
+
 		// Record metrics for this file
 		fileExt := strings.ToLower(filepath.Ext(filename))
 		if fileExt == "" {
@@ -889,11 +845,11 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		metrics.UploadSize.WithLabelValues(fileExt).Observe(float64(n))
 		metrics.UploadThroughput.WithLabelValues(fileExt).Observe(mbps)
 		metrics.UploadsTotal.WithLabelValues(fileExt, "success").Inc()
-		
+
 		// Decrement active counters
 		metrics.ActiveUploads.Dec()
 		metrics.ActiveTransfers.Dec()
-		
+
 		requestStart = time.Now() // Reset for next file
 	}
 
@@ -947,7 +903,7 @@ func findUniqueFilename(dir, name string) string {
 
 	ext := filepath.Ext(name)
 	base := strings.TrimSuffix(name, ext)
-	
+
 	// First try: exact match
 	path := filepath.Join(dir, name)
 	if _, err := os.Stat(path); os.IsNotExist(err) {
@@ -962,7 +918,7 @@ func findUniqueFilename(dir, name string) string {
 			return path
 		}
 	}
-	
+
 	// Fallback: Use timestamp if 1000 collisions (unlikely)
 	return filepath.Join(dir, fmt.Sprintf("%s_%d%s", base, time.Now().UnixNano(), ext))
 }
@@ -972,7 +928,7 @@ func (s *Server) handleParallelChunk(w http.ResponseWriter, r *http.Request, fil
 	chunkStartTime := time.Now()
 	metrics.ParallelUploadWorkers.Inc()
 	defer metrics.ParallelUploadWorkers.Dec()
-	
+
 	// Parse chunk metadata
 	chunkID, err := strconv.Atoi(chunkIDStr)
 	if err != nil {
@@ -1025,11 +981,14 @@ func (s *Server) handleParallelChunk(w http.ResponseWriter, r *http.Request, fil
 	chunkDuration := time.Since(chunkStartTime).Seconds()
 	metrics.ChunkUploadDuration.Observe(chunkDuration)
 	metrics.ChunkUploadsTotal.WithLabelValues("success").Inc()
-	
+
+	// Track cumulative chunk timing for this file
+	s.addChunkDuration(filename, time.Since(chunkStartTime))
+
 	// Build response
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	
+
 	response := map[string]interface{}{
 		"success":  true,
 		"filename": filepath.Base(session.FilePath),
@@ -1037,20 +996,20 @@ func (s *Server) handleParallelChunk(w http.ResponseWriter, r *http.Request, fil
 		"chunk_id": chunkID,
 		"complete": session.isComplete(),
 	}
-	
-	json.NewEncoder(w).Encode(response)
+
+	_ = json.NewEncoder(w).Encode(response)
 
 	// Cleanup if complete
 	if session.isComplete() {
 		// Close file handle but keep session for a bit (for late retries)
 		session.mu.Lock()
 		if session.FileHandle != nil {
-			session.FileHandle.Sync()
-			session.FileHandle.Close()
+			_ = session.FileHandle.Sync()
+			_ = session.FileHandle.Close()
 			session.FileHandle = nil
 		}
 		session.mu.Unlock()
-		
+
 		// Schedule cleanup after a delay
 		go func() {
 			time.Sleep(30 * time.Second)
@@ -1098,7 +1057,7 @@ func (s *Server) getOrCreateSession(sessionID, filename string, totalSize int64,
 	// Pre-allocate file space if total size is known
 	if totalSize > 0 {
 		if err := f.Truncate(totalSize); err != nil {
-			f.Close()
+			_ = f.Close()
 			return nil, fmt.Errorf("failed to pre-allocate space: %w", err)
 		}
 	}
@@ -1160,7 +1119,7 @@ func (s *Server) cleanupSession(sessionID string) {
 		session := val.(*uploadSession)
 		session.mu.Lock()
 		if session.FileHandle != nil {
-			session.FileHandle.Close()
+			_ = session.FileHandle.Close()
 		}
 		session.mu.Unlock()
 	}
@@ -1221,7 +1180,7 @@ func (s *Server) handleRawUpload(w http.ResponseWriter, r *http.Request, encoded
 	offsetHeader := r.Header.Get("X-Upload-Offset")
 	chunkIDHeader := r.Header.Get("X-Chunk-Id")
 	chunkTotalHeader := r.Header.Get("X-Chunk-Total")
-	
+
 	isParallelChunk := sessionIDHeader != "" && chunkIDHeader != "" && chunkTotalHeader != ""
 	chunked := offsetHeader != ""
 	var uploadOffset int64
@@ -1297,7 +1256,7 @@ func (s *Server) handleRawUpload(w http.ResponseWriter, r *http.Request, encoded
 			_ = f.Truncate(totalSize)
 		}
 		if _, err := f.Seek(uploadOffset, 0); err != nil {
-			f.Close()
+			_ = f.Close()
 			http.Error(w, "seek error", http.StatusInternalServerError)
 			return
 		}
@@ -1308,18 +1267,18 @@ func (s *Server) handleRawUpload(w http.ResponseWriter, r *http.Request, encoded
 	// Hijack connection for raw TCP copy
 	hijacker, ok := w.(http.Hijacker)
 	if !ok {
-		f.Close()
+		_ = f.Close()
 		http.Error(w, "hijack not supported", http.StatusInternalServerError)
 		return
 	}
 	conn, bufrw, err := hijacker.Hijack()
 	if err != nil {
-		f.Close()
+		_ = f.Close()
 		http.Error(w, "hijack failed", http.StatusInternalServerError)
 		return
 	}
-	defer conn.Close()
-	defer f.Close()
+	defer func() { _ = conn.Close() }()
+	defer func() { _ = f.Close() }()
 
 	// Manual deadlines since http.Server timeouts no longer apply post-hijack
 	_ = conn.SetReadDeadline(time.Now().Add(time.Hour))
@@ -1356,7 +1315,7 @@ func (s *Server) handleRawUpload(w http.ResponseWriter, r *http.Request, encoded
 	}
 
 	// Limit reader to prevent over-reading
-	var reader io.Reader = io.LimitReader(bufrw, maxRead)
+	reader := io.LimitReader(bufrw, maxRead)
 
 	n, err := io.CopyBuffer(f, reader, buf)
 	if err != nil && !errors.Is(err, io.EOF) {
@@ -1388,22 +1347,16 @@ func formatBytes(bytes int64) string {
 	return fmt.Sprintf("%.1f %cB", float64(bytes)/float64(div), "KMGTPE"[exp])
 }
 
+// addChunkDuration adds chunk upload duration for performance tracking
 func (s *Server) addChunkDuration(name string, d time.Duration) time.Duration {
 	cs := s.getChunkStat(name)
 	return cs.add(d)
 }
 
+// getChunkStat gets or creates chunk statistics for a file
 func (s *Server) getChunkStat(name string) *chunkStat {
 	val, _ := s.chunkTimes.LoadOrStore(name, &chunkStat{})
 	return val.(*chunkStat)
-}
-
-func (c *chunkStat) add(d time.Duration) time.Duration {
-	c.mu.Lock()
-	c.duration += d
-	res := c.duration
-	c.mu.Unlock()
-	return res
 }
 
 // Shutdown stops the server gracefully.

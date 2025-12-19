@@ -6,8 +6,8 @@ import (
 )
 
 func TestIsPrivateIPv4(t *testing.T) {
-	cases := []struct{
-		ip string
+	cases := []struct {
+		ip   string
 		want bool
 	}{
 		{"127.0.0.1", false},
@@ -36,12 +36,12 @@ func TestDiscoverLANIP(t *testing.T) {
 		// Don't fail - environment may not have network interfaces
 		return
 	}
-	
+
 	if ip == nil {
 		t.Error("DiscoverLANIP returned nil IP without error")
 		return
 	}
-	
+
 	if !ip.IsPrivate() && !ip.IsLoopback() {
 		t.Errorf("DiscoverLANIP returned non-private IP: %s", ip)
 	}

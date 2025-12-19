@@ -53,14 +53,15 @@ func getOptimalBufferSize(fileSize int64) int {
 func Receive(url string, outputPath string, force bool, progress io.Writer) (string, error) {
 	// First, make a HEAD request or GET to determine filename and check for existing partial file
 	var startByte int64 = 0
-	var existingSize int64 = 0
-	
+
 	// Try initial request to get headers
 	resp, err := httpClient.Get(url)
-	if err != nil { return "", err }
-	
+	if err != nil {
+		return "", err
+	}
+
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		return "", fmt.Errorf("http status %d", resp.StatusCode)
 	}
 
@@ -72,79 +73,98 @@ func Receive(url string, outputPath string, force bool, progress io.Writer) (str
 	if isTextContent {
 		// Output text to stdout
 		_, err := io.Copy(os.Stdout, resp.Body)
-		resp.Body.Close()
-		if err != nil { return "", err }
+		_ = resp.Body.Close()
+		if err != nil {
+			return "", err
+		}
 		return "(stdout)", nil
 	}
 
 	name := filenameFromResponse(resp)
 	if name == "" {
 		name = path.Base(resp.Request.URL.Path)
-		if name == "" { name = "download.bin" }
+		if name == "" {
+			name = "download.bin"
+		}
 	}
 	if outputPath == "" {
 		outputPath = name
 	}
-	
+
 	totalSize := resp.ContentLength
-	resp.Body.Close()
-	
+	_ = resp.Body.Close()
+
 	// Display download header
 	if progress != nil {
-		fmt.Fprintf(progress, "Downloading: %s (%.1f MB)\n", name, float64(totalSize)/(1024*1024))
+		_, _ = fmt.Fprintf(progress, "Downloading: %s (%.1f MB)\n", name, float64(totalSize)/(1024*1024))
 	}
-	
+
 	// Check if file already exists and can be resumed
 	var f *os.File
 	if fi, err := os.Stat(outputPath); err == nil {
-		existingSize = fi.Size()
-		if !force && existingSize > 0 && existingSize < totalSize {
+		if !force && fi.Size() > 0 && fi.Size() < totalSize {
 			// File exists and is incomplete - try to resume
-			startByte = existingSize
+			startByte = fi.Size()
 			f, err = os.OpenFile(outputPath, os.O_WRONLY|os.O_APPEND, 0o600)
-			if err != nil { return "", err }
+			if err != nil {
+				return "", err
+			}
 		} else if !force {
 			return "", errors.New("destination exists; use --force to overwrite")
 		} else {
 			// Force overwrite
 			f, err = os.Create(outputPath)
-			if err != nil { return "", err }
+			if err != nil {
+				return "", err
+			}
 		}
 	} else {
 		// File doesn't exist - create new
 		f, err = os.Create(outputPath)
-		if err != nil { return "", err }
+		if err != nil {
+			return "", err
+		}
 	}
-	defer f.Close()
-	
+	defer func() { _ = f.Close() }()
+
 	// Make the actual download request with Range header if resuming
 	var downloadResp *http.Response
 	if startByte > 0 {
 		req, err := http.NewRequest("GET", url, nil)
-		if err != nil { return "", err }
+		if err != nil {
+			return "", err
+		}
 		req.Header.Set("Range", fmt.Sprintf("bytes=%d-", startByte))
 		downloadResp, err = httpClient.Do(req)
-		if err != nil { return "", err }
-		defer downloadResp.Body.Close()
-		
+		if err != nil {
+			return "", err
+		}
+		defer func() { _ = downloadResp.Body.Close() }()
+
 		if downloadResp.StatusCode != http.StatusPartialContent {
 			// Server doesn't support resume, start over
-			f.Close()
+			_ = f.Close()
 			f, err = os.Create(outputPath)
-			if err != nil { return "", err }
-			defer f.Close()
+			if err != nil {
+				return "", err
+			}
+			defer func() { _ = f.Close() }()
 			startByte = 0
-			downloadResp.Body.Close()
+			_ = downloadResp.Body.Close()
 			downloadResp, err = httpClient.Get(url)
-			if err != nil { return "", err }
-			defer downloadResp.Body.Close()
+			if err != nil {
+				return "", err
+			}
+			defer func() { _ = downloadResp.Body.Close() }()
 		}
 	} else {
 		downloadResp, err = httpClient.Get(url)
-		if err != nil { return "", err }
-		defer downloadResp.Body.Close()
+		if err != nil {
+			return "", err
+		}
+		defer func() { _ = downloadResp.Body.Close() }()
 	}
-	
+
 	var src io.Reader = downloadResp.Body
 	if progress != nil {
 		// Use the improved progress reader with ETA calculation
@@ -156,50 +176,52 @@ func Receive(url string, outputPath string, force bool, progress io.Writer) (str
 			StartTime: time.Now(),
 		}
 	}
-	
+
 	// Use adaptive buffer sizing based on file size
 	bufferSize := getOptimalBufferSize(totalSize)
 	buf := make([]byte, bufferSize)
-	
+
 	// Compute checksum while downloading
 	hash := sha256.New()
 	teeReader := io.TeeReader(src, hash)
-	
-	if _, err := io.CopyBuffer(f, teeReader, buf); err != nil { 
-		return "", err 
+
+	if _, err := io.CopyBuffer(f, teeReader, buf); err != nil {
+		return "", err
 	}
-	
+
 	// Print completion message
 	if progress != nil {
-		fmt.Fprintf(progress, "\n✓ Download complete\n")
+		_, _ = fmt.Fprintf(progress, "\n✓ Download complete\n")
 	}
-	
+
 	// Verify checksum if server provided one
 	expectedChecksum := downloadResp.Header.Get("X-Content-SHA256")
 	if expectedChecksum != "" {
 		actualChecksum := hex.EncodeToString(hash.Sum(nil))
 		if actualChecksum != expectedChecksum {
 			metrics.ChecksumVerifications.WithLabelValues("mismatch").Inc()
-			os.Remove(outputPath) // Delete corrupted file
+			_ = os.Remove(outputPath) // Delete corrupted file
 			return "", fmt.Errorf("checksum verification failed: expected %s, got %s", expectedChecksum[:16]+"...", actualChecksum[:16]+"...")
 		}
 		metrics.ChecksumVerifications.WithLabelValues("match").Inc()
 		if progress != nil {
-			fmt.Fprintf(progress, "✓ Checksum verified\n")
+			_, _ = fmt.Fprintf(progress, "✓ Checksum verified\n")
 		}
 	}
-	
+
 	// Print saved location
 	if progress != nil {
-		fmt.Fprintf(progress, "Saved to: %s\n", outputPath)
+		_, _ = fmt.Fprintf(progress, "Saved to: %s\n", outputPath)
 	}
-	
+
 	return outputPath, nil
 }
 
 func filenameFromResponse(resp *http.Response) string {
 	cd := resp.Header.Get("Content-Disposition")
-	if cd == "" { return "" }
+	if cd == "" {
+		return ""
+	}
 	// simplistic parsing: attachment; filename="name"
 	parts := strings.Split(cd, ";")
 	for _, p := range parts {

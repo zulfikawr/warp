@@ -25,14 +25,12 @@ import (
 const (
 	colorReset   = "\033[0m"
 	colorBold    = "\033[1m"
-	colorDim     = "\033[2m"
 	colorRed     = "\033[31m"
 	colorGreen   = "\033[32m"
-	colorYellow  = "\033[33m"
 	colorBlue    = "\033[34m"
 	colorMagenta = "\033[35m"
 	colorCyan    = "\033[36m"
-	
+
 	symbolPass = "✓"
 	symbolFail = "✗"
 	symbolInfo = "ℹ"
@@ -83,13 +81,6 @@ func assertEqual(t *testing.T, expected, actual interface{}, msg string) {
 	}
 }
 
-func assertNotNil(t *testing.T, val interface{}, msg string) {
-	t.Helper()
-	if val == nil {
-		t.Errorf("%s%s FAIL%s %s: value is nil", colorRed, symbolFail, colorReset, msg)
-	}
-}
-
 func assertNoError(t *testing.T, err error, msg string) {
 	t.Helper()
 	if err != nil {
@@ -100,7 +91,7 @@ func assertNoError(t *testing.T, err error, msg string) {
 // TestE2E_FileTransfer tests basic file transfer with various sizes
 func TestE2E_FileTransfer(t *testing.T) {
 	logSection(t, "File Transfer Tests")
-	
+
 	testCases := []struct {
 		name string
 		size int
@@ -116,53 +107,53 @@ func TestE2E_FileTransfer(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			start := time.Now()
 			logTest(t, "Creating test file: %s (%s)", tc.name, formatBytes(int64(tc.size)))
-			
+
 			// Prepare source file
 			src, err := os.CreateTemp("", "warp-src-*")
 			assertNoError(t, err, "Create temp file")
-			defer os.Remove(src.Name())
-			
+			defer func() { _ = os.Remove(src.Name()) }()
+
 			data := bytes.Repeat([]byte{tc.fill}, tc.size)
 			_, err = src.Write(data)
 			assertNoError(t, err, "Write test data")
-			src.Close()
-			
+			_ = src.Close()
+
 			logInfo(t, "File created: %s", filepath.Base(src.Name()))
 
 			// Start server
 			tok, err := crypto.GenerateToken(nil)
 			assertNoError(t, err, "Generate token")
-			
+
 			srv := &server.Server{Token: tok, SrcPath: src.Name()}
 			url, err := srv.Start()
 			assertNoError(t, err, "Start server")
-			defer srv.Shutdown()
-			
+			defer func() { _ = srv.Shutdown() }()
+
 			logInfo(t, "Server started: %s", url)
 
 			// Receive file
 			logTest(t, "Downloading file...")
 			out, err := client.Receive(url, "", true, io.Discard)
 			assertNoError(t, err, "Download file")
-			defer os.Remove(out)
-			
+			defer func() { _ = os.Remove(out) }()
+
 			logInfo(t, "Downloaded to: %s", filepath.Base(out))
 
 			// Verify integrity
 			logTest(t, "Verifying file integrity...")
 			srcb, _ := os.ReadFile(src.Name())
 			outb, _ := os.ReadFile(out)
-			
+
 			assertEqual(t, len(srcb), len(outb), "File size")
-			
+
 			srcHash := md5.Sum(srcb)
 			outHash := md5.Sum(outb)
 			assertEqual(t, srcHash, outHash, "MD5 checksum")
-			
+
 			duration := time.Since(start)
 			mbps := (float64(len(outb)) * 8) / (duration.Seconds() * 1_000_000)
-			
-			logPass(t, "Transfer complete: %s in %v (%.1f Mbps)", 
+
+			logPass(t, "Transfer complete: %s in %v (%.1f Mbps)",
 				formatBytes(int64(len(outb))), duration.Round(time.Millisecond), mbps)
 		})
 	}
@@ -175,7 +166,7 @@ func TestE2E_FileTransfer(t *testing.T) {
 // TestE2E_TextSharing tests text/clipboard sharing with various content types
 func TestE2E_TextSharing(t *testing.T) {
 	logSection(t, "Text Sharing Tests")
-	
+
 	testCases := []struct {
 		name    string
 		content string
@@ -193,14 +184,14 @@ func TestE2E_TextSharing(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			logTest(t, "Testing text sharing: %s (%d bytes)", tc.name, len(tc.content))
-			
+
 			tok, err := crypto.GenerateToken(nil)
 			assertNoError(t, err, "Generate token")
-			
+
 			srv := &server.Server{Token: tok, TextContent: tc.content}
 			url, err := srv.Start()
 			assertNoError(t, err, "Start server")
-			defer srv.Shutdown()
+			defer func() { _ = srv.Shutdown() }()
 
 			logInfo(t, "Server URL: %s", url)
 
@@ -222,20 +213,20 @@ func TestE2E_TextSharing(t *testing.T) {
 // TestE2E_HostUpload tests the upload (host) mode with various scenarios
 func TestE2E_HostUpload(t *testing.T) {
 	logSection(t, "Host Upload Tests")
-	
+
 	t.Run("SingleFileUpload", func(t *testing.T) {
 		logTest(t, "Testing single file upload")
-		
+
 		destDir, err := os.MkdirTemp("", "warp-host-*")
 		assertNoError(t, err, "Create temp dir")
-		defer os.RemoveAll(destDir)
+		defer func() { _ = os.RemoveAll(destDir) }()
 
 		tok, _ := crypto.GenerateToken(nil)
 		srv := &server.Server{Token: tok, HostMode: true, UploadDir: destDir}
 		url, err := srv.Start()
 		assertNoError(t, err, "Start server")
-		defer srv.Shutdown()
-		
+		defer func() { _ = srv.Shutdown() }()
+
 		logInfo(t, "Host server URL: %s", url)
 
 		// Test GET returns HTML form
@@ -243,8 +234,8 @@ func TestE2E_HostUpload(t *testing.T) {
 		resp, err := http.Get(url)
 		assertNoError(t, err, "GET request")
 		body, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		
+		_ = resp.Body.Close()
+
 		assertEqual(t, http.StatusOK, resp.StatusCode, "HTTP status")
 		if !strings.Contains(string(body), "<form") {
 			t.Error("HTML form not found in response")
@@ -258,8 +249,8 @@ func TestE2E_HostUpload(t *testing.T) {
 		mw := multipart.NewWriter(&buf)
 		fw, err := mw.CreateFormFile("file", "test-upload.txt")
 		assertNoError(t, err, "Create form file")
-		io.WriteString(fw, testContent)
-		mw.Close()
+		_, _ = io.WriteString(fw, testContent)
+		_ = mw.Close()
 
 		req, err := http.NewRequest(http.MethodPost, url, &buf)
 		assertNoError(t, err, "Create POST request")
@@ -267,9 +258,9 @@ func TestE2E_HostUpload(t *testing.T) {
 
 		resp2, err := http.DefaultClient.Do(req)
 		assertNoError(t, err, "POST request")
-		io.Copy(io.Discard, resp2.Body)
-		resp2.Body.Close()
-		
+		_, _ = io.Copy(io.Discard, resp2.Body)
+		_ = resp2.Body.Close()
+
 		assertEqual(t, http.StatusOK, resp2.StatusCode, "Upload status")
 		logPass(t, "File uploaded successfully")
 
@@ -284,33 +275,33 @@ func TestE2E_HostUpload(t *testing.T) {
 
 	t.Run("DuplicateFileUpload", func(t *testing.T) {
 		logTest(t, "Testing duplicate file upload (should create versioned files)")
-		
+
 		destDir, err := os.MkdirTemp("", "warp-host-dup-*")
 		assertNoError(t, err, "Create temp dir")
-		defer os.RemoveAll(destDir)
+		defer func() { _ = os.RemoveAll(destDir) }()
 
 		tok, _ := crypto.GenerateToken(nil)
 		srv := &server.Server{Token: tok, HostMode: true, UploadDir: destDir}
 		url, err := srv.Start()
 		assertNoError(t, err, "Start server")
-		defer srv.Shutdown()
+		defer func() { _ = srv.Shutdown() }()
 
 		// Upload same filename 3 times
 		for i := 1; i <= 3; i++ {
 			logTest(t, "Upload #%d", i)
 			content := fmt.Sprintf("content-version-%d", i)
-			
+
 			var buf bytes.Buffer
 			mw := multipart.NewWriter(&buf)
 			fw, _ := mw.CreateFormFile("file", "duplicate.txt")
-			io.WriteString(fw, content)
-			mw.Close()
+			_, _ = io.WriteString(fw, content)
+			_ = mw.Close()
 
 			req, _ := http.NewRequest(http.MethodPost, url, &buf)
 			req.Header.Set("Content-Type", mw.FormDataContentType())
 			resp, _ := http.DefaultClient.Do(req)
-			io.Copy(io.Discard, resp.Body)
-			resp.Body.Close()
+			_, _ = io.Copy(io.Discard, resp.Body)
+			_ = resp.Body.Close()
 		}
 
 		// Verify all 3 versions exist
@@ -338,45 +329,45 @@ func TestE2E_HostUpload(t *testing.T) {
 // TestE2E_ResumableDownload tests download resumption functionality
 func TestE2E_ResumableDownload(t *testing.T) {
 	logSection(t, "Resumable Download Tests")
-	
+
 	logTest(t, "Creating 10MB test file")
-	
+
 	src, err := os.CreateTemp("", "warp-resume-*")
 	assertNoError(t, err, "Create temp file")
-	defer os.Remove(src.Name())
-	
+	defer func() { _ = os.Remove(src.Name()) }()
+
 	// Write 10MB of recognizable data
 	data := bytes.Repeat([]byte("ABCDEFGHIJ"), 1024*1024)
 	_, err = src.Write(data)
 	assertNoError(t, err, "Write test data")
-	src.Close()
-	
+	_ = src.Close()
+
 	logInfo(t, "Test file: %s", formatBytes(int64(len(data))))
 
 	tok, _ := crypto.GenerateToken(nil)
 	srv := &server.Server{Token: tok, SrcPath: src.Name()}
 	url, err := srv.Start()
 	assertNoError(t, err, "Start server")
-	defer srv.Shutdown()
-	
+	defer func() { _ = srv.Shutdown() }()
+
 	logInfo(t, "Server URL: %s", url)
 
 	outPath, err := os.CreateTemp("", "warp-out-*")
 	assertNoError(t, err, "Create output file")
 	outName := outPath.Name()
-	defer os.Remove(outName)
+	defer func() { _ = os.Remove(outName) }()
 
 	// Partial download: get 5MB
 	logTest(t, "Downloading first 5MB (50%% of file)...")
 	resp, err := http.Get(url)
 	assertNoError(t, err, "HTTP GET")
-	
+
 	limited := io.LimitReader(resp.Body, 5*1024*1024)
 	n, err := io.Copy(outPath, limited)
-	resp.Body.Close()
-	outPath.Close()
+	_ = resp.Body.Close()
+	_ = outPath.Close()
 	assertNoError(t, err, "Write partial data")
-	
+
 	logInfo(t, "Partial download: %s", formatBytes(n))
 
 	// Verify partial file size
@@ -391,7 +382,7 @@ func TestE2E_ResumableDownload(t *testing.T) {
 	result, err := client.Receive(url, outName, true, io.Discard)
 	assertNoError(t, err, "Resume download")
 	duration := time.Since(start)
-	
+
 	assertEqual(t, outName, result, "Output path")
 	logPass(t, "Download resumed and completed in %v", duration.Round(time.Millisecond))
 
@@ -399,13 +390,13 @@ func TestE2E_ResumableDownload(t *testing.T) {
 	logTest(t, "Verifying complete file integrity...")
 	srcb, _ := os.ReadFile(src.Name())
 	outb, _ := os.ReadFile(outName)
-	
+
 	assertEqual(t, len(srcb), len(outb), "File size")
-	
+
 	srcHash := sha256.Sum256(srcb)
 	outHash := sha256.Sum256(outb)
 	assertEqual(t, srcHash, outHash, "SHA256 checksum")
-	
+
 	logPass(t, "File integrity verified: %s", formatBytes(int64(len(outb))))
 
 	t.Logf("")
@@ -416,24 +407,24 @@ func TestE2E_ResumableDownload(t *testing.T) {
 // TestE2E_DirectoryZipTransfer tests directory compression and transfer
 func TestE2E_DirectoryZipTransfer(t *testing.T) {
 	logSection(t, "Directory Transfer Tests")
-	
+
 	logTest(t, "Creating test directory structure")
-	
+
 	srcDir, err := os.MkdirTemp("", "warp-dir-*")
 	assertNoError(t, err, "Create temp dir")
-	defer os.RemoveAll(srcDir)
+	defer func() { _ = os.RemoveAll(srcDir) }()
 
 	// Create nested directory structure
 	structure := map[string]string{
-		"file1.txt":           "root file content",
-		"subdir/file2.txt":    "subdir file content",
-		"subdir/file3.txt":    "another subdir file",
+		"file1.txt":            "root file content",
+		"subdir/file2.txt":     "subdir file content",
+		"subdir/file3.txt":     "another subdir file",
 		"deep/nested/file.txt": "deeply nested content",
 	}
 
 	for path, content := range structure {
 		fullPath := filepath.Join(srcDir, path)
-		os.MkdirAll(filepath.Dir(fullPath), 0755)
+		_ = os.MkdirAll(filepath.Dir(fullPath), 0755)
 		err := os.WriteFile(fullPath, []byte(content), 0644)
 		assertNoError(t, err, "Write "+path)
 		logInfo(t, "Created: %s", path)
@@ -444,8 +435,8 @@ func TestE2E_DirectoryZipTransfer(t *testing.T) {
 	srv := &server.Server{Token: tok, SrcPath: srcDir}
 	url, err := srv.Start()
 	assertNoError(t, err, "Start server")
-	defer srv.Shutdown()
-	
+	defer func() { _ = srv.Shutdown() }()
+
 	logInfo(t, "Server URL: %s", url)
 
 	// Download (should be zipped)
@@ -453,13 +444,13 @@ func TestE2E_DirectoryZipTransfer(t *testing.T) {
 	start := time.Now()
 	out, err := client.Receive(url, "", true, io.Discard)
 	assertNoError(t, err, "Download directory")
-	defer os.Remove(out)
+	defer func() { _ = os.Remove(out) }()
 	duration := time.Since(start)
 
 	// Verify it's a zip file
 	fi, _ := os.Stat(out)
 	logPass(t, "ZIP downloaded: %s in %v", formatBytes(fi.Size()), duration.Round(time.Millisecond))
-	
+
 	if !strings.HasSuffix(out, ".zip") {
 		t.Error("Downloaded file should have .zip extension")
 	} else {
@@ -474,16 +465,16 @@ func TestE2E_DirectoryZipTransfer(t *testing.T) {
 // TestE2E_TokenSecurity tests token authentication
 func TestE2E_TokenSecurity(t *testing.T) {
 	logSection(t, "Token Security Tests")
-	
+
 	t.Run("InvalidToken", func(t *testing.T) {
 		logTest(t, "Testing invalid token rejection")
-		
+
 		tok, _ := crypto.GenerateToken(nil)
 		srv := &server.Server{Token: tok, TextContent: "secret"}
 		url, err := srv.Start()
 		assertNoError(t, err, "Start server")
-		defer srv.Shutdown()
-		
+		defer func() { _ = srv.Shutdown() }()
+
 		logInfo(t, "Valid URL: %s", url)
 
 		// Replace token with invalid one
@@ -496,8 +487,8 @@ func TestE2E_TokenSecurity(t *testing.T) {
 			logPass(t, "Request failed as expected")
 			return
 		}
-		defer resp.Body.Close()
-		
+		defer func() { _ = resp.Body.Close() }()
+
 		if resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusNotFound {
 			logPass(t, "Invalid token rejected with status %d", resp.StatusCode)
 		} else {
@@ -513,7 +504,7 @@ func TestE2E_TokenSecurity(t *testing.T) {
 // TestE2E_FilenameHandling tests various filename edge cases
 func TestE2E_FilenameHandling(t *testing.T) {
 	logSection(t, "Filename Handling Tests")
-	
+
 	testCases := []struct {
 		name     string
 		filename string
@@ -529,28 +520,28 @@ func TestE2E_FilenameHandling(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			logTest(t, "Testing filename: %s", tc.filename)
-			
+
 			destDir, err := os.MkdirTemp("", "warp-fname-*")
 			assertNoError(t, err, "Create temp dir")
-			defer os.RemoveAll(destDir)
+			defer func() { _ = os.RemoveAll(destDir) }()
 
 			tok, _ := crypto.GenerateToken(nil)
 			srv := &server.Server{Token: tok, HostMode: true, UploadDir: destDir}
 			url, err := srv.Start()
 			assertNoError(t, err, "Start server")
-			defer srv.Shutdown()
+			defer func() { _ = srv.Shutdown() }()
 
 			var buf bytes.Buffer
 			mw := multipart.NewWriter(&buf)
 			fw, _ := mw.CreateFormFile("file", tc.filename)
-			io.WriteString(fw, "test content")
-			mw.Close()
+			_, _ = io.WriteString(fw, "test content")
+			_ = mw.Close()
 
 			req, _ := http.NewRequest(http.MethodPost, url, &buf)
 			req.Header.Set("Content-Type", mw.FormDataContentType())
 			resp, _ := http.DefaultClient.Do(req)
-			io.Copy(io.Discard, resp.Body)
-			resp.Body.Close()
+			_, _ = io.Copy(io.Discard, resp.Body)
+			_ = resp.Body.Close()
 
 			if tc.safe {
 				assertEqual(t, http.StatusOK, resp.StatusCode, "Upload status")
@@ -567,24 +558,24 @@ func TestE2E_FilenameHandling(t *testing.T) {
 // TestE2E_ConcurrentTransfers tests multiple simultaneous transfers
 func TestE2E_ConcurrentTransfers(t *testing.T) {
 	logSection(t, "Concurrent Transfer Tests")
-	
+
 	logTest(t, "Testing 5 concurrent downloads")
-	
+
 	// Create test file
 	src, err := os.CreateTemp("", "warp-concurrent-*")
 	assertNoError(t, err, "Create temp file")
-	defer os.Remove(src.Name())
-	
+	defer func() { _ = os.Remove(src.Name()) }()
+
 	data := bytes.Repeat([]byte("concurrent-test-data"), 1024)
-	src.Write(data)
-	src.Close()
+	_, _ = src.Write(data)
+	_ = src.Close()
 
 	tok, _ := crypto.GenerateToken(nil)
 	srv := &server.Server{Token: tok, SrcPath: src.Name()}
 	url, err := srv.Start()
 	assertNoError(t, err, "Start server")
-	defer srv.Shutdown()
-	
+	defer func() { _ = srv.Shutdown() }()
+
 	logInfo(t, "Server URL: %s", url)
 
 	// Launch 5 concurrent downloads
@@ -601,7 +592,7 @@ func TestE2E_ConcurrentTransfers(t *testing.T) {
 				done <- false
 				return
 			}
-			os.Remove(out)
+			_ = os.Remove(out)
 			logPass(t, "Client %d: Download complete", id)
 			done <- true
 		}(i)
@@ -614,11 +605,11 @@ func TestE2E_ConcurrentTransfers(t *testing.T) {
 			success++
 		}
 	}
-	
+
 	duration := time.Since(start)
-	logPass(t, "Concurrent transfers: %d/%d successful in %v", 
+	logPass(t, "Concurrent transfers: %d/%d successful in %v",
 		success, numClients, duration.Round(time.Millisecond))
-	
+
 	if success != numClients {
 		t.Errorf("Expected %d successful transfers, got %d", numClients, success)
 	}
@@ -667,18 +658,18 @@ func TestE2E_ParallelUpload(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Failed to start server: %v", err)
 		}
-		defer srv.Shutdown()
+		defer func() { _ = srv.Shutdown() }()
 
 		logInfo(t, "Host server URL: %s", url)
 
 		logTest(t, "Starting parallel chunk upload (3 workers, 2MB chunks)")
-		
+
 		// Configure parallel upload
 		config := &client.UploadConfig{
-			ChunkSize:      2 * 1024 * 1024, // 2MB chunks
-			MaxConcurrent:  3,                // 3 parallel workers
-			RetryAttempts:  2,
-			RetryDelay:     500 * time.Millisecond,
+			ChunkSize:     2 * 1024 * 1024, // 2MB chunks
+			MaxConcurrent: 3,               // 3 parallel workers
+			RetryAttempts: 2,
+			RetryDelay:    500 * time.Millisecond,
 		}
 
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -687,7 +678,7 @@ func TestE2E_ParallelUpload(t *testing.T) {
 		startTime := time.Now()
 		err = client.ParallelUpload(ctx, url, testFile, config, nil)
 		duration := time.Since(startTime)
-		
+
 		if err != nil {
 			t.Fatalf("Parallel upload failed: %v", err)
 		}
@@ -731,43 +722,43 @@ func TestE2E_Performance(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping performance test in short mode")
 	}
-	
+
 	logSection(t, "Performance Tests")
-	
+
 	sizes := []int64{
-		1 * 1024 * 1024,      // 1MB
-		10 * 1024 * 1024,     // 10MB
-		50 * 1024 * 1024,     // 50MB
+		1 * 1024 * 1024,  // 1MB
+		10 * 1024 * 1024, // 10MB
+		50 * 1024 * 1024, // 50MB
 	}
 
 	for _, size := range sizes {
 		t.Run(fmt.Sprintf("Transfer_%s", formatBytes(size)), func(t *testing.T) {
 			logTest(t, "Performance test: %s", formatBytes(size))
-			
+
 			src, _ := os.CreateTemp("", "warp-perf-*")
-			defer os.Remove(src.Name())
-			
+			defer func() { _ = os.Remove(src.Name()) }()
+
 			// Write random-ish data
 			data := bytes.Repeat([]byte("performance-benchmark-data-"), int(size/27))
-			src.Write(data)
-			src.Close()
+			_, _ = src.Write(data)
+			_ = src.Close()
 
 			tok, _ := crypto.GenerateToken(nil)
 			srv := &server.Server{Token: tok, SrcPath: src.Name()}
 			url, _ := srv.Start()
-			defer srv.Shutdown()
+			defer func() { _ = srv.Shutdown() }()
 
 			start := time.Now()
 			out, err := client.Receive(url, "", true, io.Discard)
 			duration := time.Since(start)
-			
+
 			assertNoError(t, err, "Download")
-			defer os.Remove(out)
+			defer func() { _ = os.Remove(out) }()
 
 			mbps := (float64(size) * 8) / (duration.Seconds() * 1_000_000)
 			throughput := float64(size) / duration.Seconds() / (1024 * 1024)
-			
-			logPass(t, "%s transferred in %v (%.1f Mbps, %.2f MiB/s)", 
+
+			logPass(t, "%s transferred in %v (%.1f Mbps, %.2f MiB/s)",
 				formatBytes(size), duration.Round(time.Millisecond), mbps, throughput)
 		})
 	}

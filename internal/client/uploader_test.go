@@ -18,14 +18,14 @@ func TestParallelUpload(t *testing.T) {
 	// Create a temporary test file
 	tmpDir := t.TempDir()
 	testFile := filepath.Join(tmpDir, "test-upload.bin")
-	
+
 	// Create 5MB test file
 	testData := make([]byte, 5*1024*1024)
 	_, err := rand.Read(testData)
 	if err != nil {
 		t.Fatalf("Failed to generate test data: %v", err)
 	}
-	
+
 	if err := os.WriteFile(testFile, testData, 0644); err != nil {
 		t.Fatalf("Failed to write test file: %v", err)
 	}
@@ -33,33 +33,33 @@ func TestParallelUpload(t *testing.T) {
 	// Create mock server
 	receivedChunks := make(map[int][]byte)
 	var sessionID string
-	
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		sessionID = r.Header.Get("X-Upload-Session")
 		chunkIDStr := r.Header.Get("X-Chunk-Id")
-		
+
 		if chunkIDStr == "" {
 			http.Error(w, "missing chunk id", http.StatusBadRequest)
 			return
 		}
-		
+
 		chunkID := 0
 		if _, err := fmt.Sscanf(chunkIDStr, "%d", &chunkID); err != nil {
 			http.Error(w, "invalid chunk id", http.StatusBadRequest)
 			return
 		}
-		
+
 		// Read chunk data
 		data, err := io.ReadAll(r.Body)
 		if err != nil {
 			http.Error(w, "read error", http.StatusInternalServerError)
 			return
 		}
-		
+
 		receivedChunks[chunkID] = data
-		
+
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"success":true}`))
+		_, _ = w.Write([]byte(`{"success":true}`))
 	}))
 	defer server.Close()
 
@@ -116,7 +116,7 @@ func TestUploadSessionRetry(t *testing.T) {
 
 	// Create mock server that fails first 2 attempts
 	attempts := make(map[int]int)
-	
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		chunkIDStr := r.Header.Get("X-Chunk-Id")
 		chunkID := 0
@@ -125,15 +125,15 @@ func TestUploadSessionRetry(t *testing.T) {
 			return
 		}
 		attempts[chunkID]++
-		
+
 		// Fail first 2 attempts
 		if attempts[chunkID] < 3 {
 			http.Error(w, "simulated failure", http.StatusInternalServerError)
 			return
 		}
-		
+
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"success":true}`))
+		_, _ = w.Write([]byte(`{"success":true}`))
 	}))
 	defer server.Close()
 
@@ -171,7 +171,7 @@ func TestUploadSessionCancel(t *testing.T) {
 	// Create slow server
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(5 * time.Second) // Simulate slow upload
-		w.Write([]byte(`{"success":true}`))
+		_, _ = w.Write([]byte(`{"success":true}`))
 	}))
 	defer server.Close()
 
@@ -187,7 +187,7 @@ func TestUploadSessionCancel(t *testing.T) {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	
+
 	// Start upload in goroutine
 	uploadErr := make(chan error, 1)
 	go func() {
