@@ -15,6 +15,7 @@ import (
 	"github.com/zulfikawr/warp/internal/config"
 	"github.com/zulfikawr/warp/internal/crypto"
 	"github.com/zulfikawr/warp/internal/discovery"
+	"github.com/zulfikawr/warp/internal/logging"
 	"github.com/zulfikawr/warp/internal/server"
 	"github.com/zulfikawr/warp/internal/ui"
 )
@@ -182,7 +183,7 @@ func sendHelp() {
 	fmt.Println("  " + cYellow + "--cache-size" + cReset + "      file cache size in MB (default: 100)")
 	fmt.Println("  " + cYellow + "--no-qr" + cReset + "           skip printing the QR code")
 	fmt.Println("  " + cYellow + "--encrypt" + cReset + "         encrypt transfer with password (prompts if not provided)")
-	fmt.Println("  " + cYellow + "-v, --verbose" + cReset + "     verbose logging")
+	fmt.Println("  " + cYellow + "-v, --verbose" + cReset + "     verbose logging (use -vv or -vvv for more detail)")
 	fmt.Println()
 	fmt.Println(cBold + "Examples:" + cReset)
 	fmt.Println("  " + cGreen + "warp send" + cReset + " ./photo.jpg                    " + cDim + "# Share a file" + cReset)
@@ -210,7 +211,7 @@ func hostHelp() {
 	fmt.Println("  " + cYellow + "--rate-limit" + cReset + "      limit upload bandwidth in Mbps (0 = unlimited)")
 	fmt.Println("  " + cYellow + "--no-qr" + cReset + "           skip printing the QR code")
 	fmt.Println("  " + cYellow + "--encrypt" + cReset + "         require encrypted uploads with password")
-	fmt.Println("  " + cYellow + "-v, --verbose" + cReset + "     verbose logging")
+	fmt.Println("  " + cYellow + "-v, --verbose" + cReset + "     verbose logging (use -vv or -vvv for more detail)")
 	fmt.Println()
 	fmt.Println(cBold + "Examples:" + cReset)
 	fmt.Println("  " + cGreen + "warp host" + cReset + "                                " + cDim + "# Accept uploads to current directory" + cReset)
@@ -239,7 +240,7 @@ func receiveHelp() {
 	fmt.Println("  " + cYellow + "--chunk-size" + cReset + "      chunk size in MB for parallel uploads (default: 2)")
 	fmt.Println("  " + cYellow + "--no-checksum" + cReset + "     skip SHA256 checksum verification (faster)")
 	fmt.Println("  " + cYellow + "--decrypt" + cReset + "         decrypt transfer with password (prompts if not provided)")
-	fmt.Println("  " + cYellow + "-v, --verbose" + cReset + "     verbose logging")
+	fmt.Println("  " + cYellow + "-v, --verbose" + cReset + "     verbose logging (use -vv or -vvv for more detail)")
 	fmt.Println()
 	fmt.Println(cBold + "Examples:" + cReset)
 	fmt.Println("  " + cGreen + "warp receive" + cReset + " http://host:port/d/token                      " + cDim + "# Download file" + cReset)
@@ -269,7 +270,27 @@ func searchHelp() {
 	fmt.Println("  " + cGreen + "warp search" + cReset + " --timeout 100ms        " + cDim + "# Quick search" + cReset)
 }
 
+// countVerbosity counts how many -v or --verbose flags are in args
+// Returns: verbosity level (0, 1, 2, 3+), filtered args without -v/--verbose
+func countVerbosity(args []string) (int, []string) {
+	verbosity := 0
+	filtered := make([]string, 0, len(args))
+
+	for _, arg := range args {
+		if arg == "-v" || arg == "--verbose" {
+			verbosity++
+		} else {
+			filtered = append(filtered, arg)
+		}
+	}
+
+	return verbosity, filtered
+}
+
 func sendCmd(args []string) {
+	// Count -v flags and filter them out
+	verbosity, filteredArgs := countVerbosity(args)
+
 	fs := flag.NewFlagSet("send", flag.ExitOnError)
 	fs.Usage = sendHelp
 	port := fs.Int("port", 0, "specific port")
@@ -281,10 +302,13 @@ func sendCmd(args []string) {
 	stdin := fs.Bool("stdin", false, "read from stdin")
 	rateLimit := fs.Float64("rate-limit", 0, "bandwidth limit in Mbps")
 	cacheSize := fs.Int64("cache-size", 100, "file cache size in MB")
-	verbose := fs.Bool("verbose", false, "verbose logging")
-	fs.BoolVar(verbose, "v", false, "")
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(filteredArgs); err != nil {
 		log.Fatal(err)
+	}
+
+	// Set log level based on verbosity
+	if verbosity > 0 {
+		logging.SetLevel(verbosity)
 	}
 
 	tok, err := crypto.GenerateToken(nil)
@@ -336,10 +360,13 @@ func sendCmd(args []string) {
 
 	if !*noQR {
 		fmt.Fprintln(os.Stderr)
+		fmt.Fprintln(os.Stderr, cBold+"Scan QR code on another device:"+cReset)
 		_ = ui.PrintQR(url)
+		fmt.Fprintln(os.Stderr)
+		fmt.Fprintln(os.Stderr, cDim+"Tip: Open the URL in any browser to download"+cReset)
 	}
 
-	fmt.Fprintf(os.Stderr, "\nPress Ctrl+C to stop server\n")
+	fmt.Fprint(os.Stderr, "\n"+cYellow+"Press Ctrl+C to stop server"+cReset+"\n")
 
 	// Wait for interrupt signal for graceful shutdown
 	sigCh := make(chan os.Signal, 1)
@@ -349,6 +376,9 @@ func sendCmd(args []string) {
 }
 
 func receiveCmd(args []string) {
+	// Count -v flags and filter them out
+	verbosity, filteredArgs := countVerbosity(args)
+
 	fs := flag.NewFlagSet("receive", flag.ExitOnError)
 	fs.Usage = receiveHelp
 	out := fs.String("output", "", "output path")
@@ -358,10 +388,13 @@ func receiveCmd(args []string) {
 	workers := fs.Int("workers", 3, "parallel upload workers")
 	chunkSizeMB := fs.Int("chunk-size", 2, "chunk size in MB")
 	noChecksum := fs.Bool("no-checksum", false, "skip checksum verification")
-	verbose := fs.Bool("verbose", false, "verbose logging")
-	fs.BoolVar(verbose, "v", false, "")
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(filteredArgs); err != nil {
 		log.Fatal(err)
+	}
+
+	// Set log level based on verbosity
+	if verbosity > 0 {
+		logging.SetLevel(verbosity)
 	}
 
 	if fs.NArg() < 1 {
@@ -369,7 +402,7 @@ func receiveCmd(args []string) {
 	}
 	url := fs.Arg(0)
 
-	if *verbose {
+	if verbosity > 0 {
 		fmt.Printf("Configuration: workers=%d, chunk-size=%dMB, checksum=%v\n",
 			*workers, *chunkSizeMB, !*noChecksum)
 	}
@@ -388,6 +421,9 @@ func receiveCmd(args []string) {
 }
 
 func hostCmd(args []string) {
+	// Count -v flags and filter them out
+	verbosity, filteredArgs := countVerbosity(args)
+
 	fs := flag.NewFlagSet("host", flag.ExitOnError)
 	fs.Usage = hostHelp
 	iface := fs.String("interface", "", "network interface")
@@ -396,10 +432,13 @@ func hostCmd(args []string) {
 	fs.StringVar(dest, "d", ".", "")
 	noQR := fs.Bool("no-qr", false, "disable QR")
 	rateLimit := fs.Float64("rate-limit", 0, "bandwidth limit in Mbps")
-	verbose := fs.Bool("verbose", false, "verbose logging")
-	fs.BoolVar(verbose, "v", false, "")
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(filteredArgs); err != nil {
 		log.Fatal(err)
+	}
+
+	// Set log level based on verbosity
+	if verbosity > 0 {
+		logging.SetLevel(verbosity)
 	}
 
 	// Ensure destination exists
@@ -436,10 +475,13 @@ func hostCmd(args []string) {
 
 	if !*noQR {
 		fmt.Fprintln(os.Stderr)
+		fmt.Fprintln(os.Stderr, cBold+"Scan QR code to upload from mobile:"+cReset)
 		_ = ui.PrintQR(url)
+		fmt.Fprintln(os.Stderr)
+		fmt.Fprintln(os.Stderr, cDim+"Tip: Drag and drop files in the browser"+cReset)
 	}
 
-	fmt.Fprintf(os.Stderr, "\nOpen this on another device to upload:\n%s\n", url)
+	fmt.Fprintf(os.Stderr, "\n"+cGreen+"Open this on another device to upload:"+cReset+"\n%s\n", url)
 
 	// Wait for interrupt signal for graceful shutdown
 	sigCh := make(chan os.Signal, 1)

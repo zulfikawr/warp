@@ -6,6 +6,7 @@ import (
 	"sync"
 
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 var (
@@ -13,6 +14,7 @@ var (
 	sugar   *zap.SugaredLogger
 	once    sync.Once
 	initErr error
+	level   = zap.NewAtomicLevelAt(zapcore.WarnLevel) // Default to warn level
 )
 
 // initLogger performs lazy initialization of the logger
@@ -23,6 +25,7 @@ func initLogger() {
 		config.Encoding = "console"
 		config.DisableStacktrace = true
 		config.DisableCaller = true
+		config.Level = level
 
 		var err error
 		logger, err = config.Build()
@@ -34,6 +37,23 @@ func initLogger() {
 		}
 		sugar = logger.Sugar()
 	})
+}
+
+// SetLevel sets the logging level
+// verbosity: 0 = warn, 1 = info (-v), 2 = debug (-vv), 3+ = debug with caller (-vvv)
+func SetLevel(verbosity int) {
+	var lvl zapcore.Level
+	switch verbosity {
+	case 0:
+		lvl = zapcore.WarnLevel
+	case 1:
+		lvl = zapcore.InfoLevel
+	case 2:
+		lvl = zapcore.DebugLevel
+	default:
+		lvl = zapcore.DebugLevel
+	}
+	level.SetLevel(lvl)
 }
 
 // GetLogger returns the structured logger

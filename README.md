@@ -130,7 +130,10 @@ Service: warp-abc123._warp._tcp.local.
 Local URL: http://192.168.1.100:54321/d/abc123token
 Metrics: http://192.168.1.100:54321/metrics
 
+Scan QR code on another device:
 [QR Code]
+
+Tip: Open the URL in any browser to download
 
 Press Ctrl+C to stop server
 ```
@@ -167,10 +170,13 @@ Hosting uploads to './uploads'
 Token: abc123token
 Features: Parallel chunks, SHA256 verification, WebSocket progress
 
+Scan QR code to upload from mobile:
 [QR Code]
 
+Tip: Drag and drop files in the browser
+
 Open this on another device to upload:
-http://192.168.1.100:54321/upload
+http://192.168.1.100:54321/u/abc123token
 ```
 
 ### Web Upload Interface
@@ -248,10 +254,17 @@ warp receive http://host:port/d/token --decrypt
 
 ```
 Downloading: document.pdf (15.2 MB)
-[====================] 100% | 15.2 MB/15.2 MB | 45.6 MB/s | ETA: 0s
-✓ Download complete
-✓ Checksum verified
-Saved to: document.pdf
+[====================] 100% | 15.2 MB/15.2 MB | 45.6 MB/s | Time: 0s | ETA: 0s
+
+Transfer Complete
+
+Summary:
+  File:         document.pdf
+  Size:         15.2 MB
+  Time:         0.3s
+  Avg Speed:    50.7 MB/s
+  Saved to:     document.pdf
+  Checksum:     Verified
 ```
 
 ---
@@ -487,7 +500,7 @@ Real-time progress with WebSocket updates.
 
 ```
 Downloading: file.zip (1.2 GB)
-[============        ] 65% | 780 MB/1.2 GB | 42.3 MB/s | ETA: 10s
+[============        ] 65% | 780 MB/1.2 GB | 42.3 MB/s | Time: 18s | ETA: 10s
 ```
 
 **Web UI:**

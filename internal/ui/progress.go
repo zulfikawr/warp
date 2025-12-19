@@ -56,19 +56,21 @@ func (p *ProgressReader) Read(b []byte) (int, error) {
 			speedStr = formatSpeed(bytesPerSec)
 		}
 
-		// Format sizes
-		currentMB := float64(p.Current) / (1024 * 1024)
-		totalMB := float64(p.Total) / (1024 * 1024)
+		// Format sizes with smarter units
+		currentSize := formatSize(p.Current)
+		totalSize := formatSize(p.Total)
+		elapsedStr := formatDuration(elapsed)
 
 		// Format progress bar with detailed information
 		if etaStr != "" && speedStr != "" {
-			_, _ = fmt.Fprintf(p.Out, "\r[%-20s] %3.0f%% | %.1f MB/%.1f MB | %s | ETA: %s",
-				bar(pct), pct, currentMB, totalMB, speedStr, etaStr)
+			_, _ = fmt.Fprintf(p.Out, "\r[%-20s] %3.0f%% | %s/%s | %s | Time: %s | ETA: %s",
+				bar(pct), pct, currentSize, totalSize, speedStr, elapsedStr, etaStr)
 		} else if speedStr != "" {
-			_, _ = fmt.Fprintf(p.Out, "\r[%-20s] %3.0f%% | %.1f MB/%.1f MB | %s",
-				bar(pct), pct, currentMB, totalMB, speedStr)
+			_, _ = fmt.Fprintf(p.Out, "\r[%-20s] %3.0f%% | %s/%s | %s | Time: %s",
+				bar(pct), pct, currentSize, totalSize, speedStr, elapsedStr)
 		} else {
-			_, _ = fmt.Fprintf(p.Out, "\r[%-20s] %3.0f%%", bar(pct), pct)
+			_, _ = fmt.Fprintf(p.Out, "\r[%-20s] %3.0f%% | %s/%s",
+				bar(pct), pct, currentSize, totalSize)
 		}
 	}
 	return n, err
@@ -120,4 +122,23 @@ func formatSpeed(bytesPerSec float64) string {
 	}
 
 	return fmt.Sprintf("%.1f %s", bytesPerSec/div, units[exp])
+}
+
+// formatSize formats bytes into a human-readable string with appropriate units
+func formatSize(bytes int64) string {
+	const unit = 1024
+	if bytes < unit {
+		return fmt.Sprintf("%d B", bytes)
+	}
+
+	div := int64(unit)
+	exp := 0
+	units := []string{"KB", "MB", "GB", "TB"}
+
+	for bytes >= div*unit && exp < len(units)-1 {
+		div *= unit
+		exp++
+	}
+
+	return fmt.Sprintf("%.1f %s", float64(bytes)/float64(div), units[exp])
 }

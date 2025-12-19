@@ -5,6 +5,56 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.4] - 2025-01-19
+
+### Added
+
+- Enhanced error messages with helpful suggestions for common issues
+  - Connection refused errors now suggest checking if server is running
+  - HTTP 404 errors now suggest verifying the URL/token
+  - File exists errors now suggest using --force flag to overwrite
+- Transfer summary display after successful downloads
+  - Shows file name, size (formatted), elapsed time, average speed
+  - Displays save location and checksum verification status
+- Stackable verbosity flags support (-v, -vv, -vvv)
+  - Single -v enables INFO level logging
+  - Double -vv enables DEBUG level logging
+  - Triple -vvv enables DEBUG level with additional details
+  - Works with both -v and --verbose flags
+- File size formatting throughout the UI (B/KB/MB/GB/TB units)
+  - Progress bar now shows human-readable sizes instead of bytes
+  - Transfer summary displays formatted file sizes
+  - Automatic unit selection based on size magnitude
+- Real-time progress display for uploads (host mode)
+  - Shows progress bar with percentage, size, speed, and elapsed time
+  - Matches the improved receiver UI for consistency
+  - Updates in real-time as chunks are received
+
+### Improved
+
+- QR code presentation
+  - Changed from Low to Medium quality for better scanning reliability
+  - Added decorative border with box-drawing characters
+  - Improved instructions text with helpful tips
+- Progress bar display (both send and receive modes)
+  - Text-based time labels (Time: and ETA:) instead of emojis
+  - More accurate speed calculation and display
+  - Consistent formatting across upload and download operations
+- Transfer summary after completion (both send and receive modes)
+  - Shows file name, size (formatted), elapsed time, average speed
+  - Text-based status messages for professional appearance
+  - Formatted with horizontal borders for visual clarity
+- Server startup messages
+  - Clean text-based output without decorative symbols
+  - Better color usage for visual hierarchy
+  - Clearer formatting and spacing
+- All UI elements now use professional text-only formatting
+  - Removed emojis from progress bars, tips, and status messages
+  - Consistent text-based approach throughout the application
+- Help text for verbose flags
+  - Updated to mention -vv and -vvv options
+  - Added descriptions explaining verbosity levels
+
 ## [1.0.3] - 2025-12-19
 
 ### Security

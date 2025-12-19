@@ -309,6 +309,7 @@ type uploadSession struct {
 	FilePath      string
 	FileHandle    *os.File
 	CreatedAt     time.Time
+	StartTime     time.Time
 	LastActivity  time.Time
 	mu            sync.Mutex
 	complete      bool
@@ -1158,14 +1159,16 @@ func (s *Server) getOrCreateSession(sessionID, filename string, totalSize int64,
 	}
 
 	// Create new session
+	now := time.Now()
 	session := &uploadSession{
 		SessionID:     sessionID,
 		Filename:      filename,
 		TotalSize:     totalSize,
 		TotalChunks:   totalChunks,
 		ChunksWritten: make(map[int]bool),
-		CreatedAt:     time.Now(),
-		LastActivity:  time.Now(),
+		CreatedAt:     now,
+		StartTime:     now,
+		LastActivity:  now,
 	}
 
 	// Determine file path
@@ -1194,8 +1197,7 @@ func (s *Server) getOrCreateSession(sessionID, filename string, totalSize int64,
 
 	// Store session
 	s.uploadSessions.Store(sessionID, session)
-	log.Printf("Created upload session %s for %s (%s, %d chunks)",
-		sessionID[:8], filepath.Base(outPath), formatBytes(totalSize), totalChunks)
+	fmt.Printf("\nReceiving: %s (%s)\n", filepath.Base(outPath), formatBytes(totalSize))
 
 	return session, nil
 }
@@ -1223,12 +1225,45 @@ func (session *uploadSession) writeChunk(chunkID int, offset int64, data []byte)
 	session.ChunksWritten[chunkID] = true
 	session.LastActivity = time.Now()
 
+	// Calculate and display progress
+	receivedBytes := int64(len(session.ChunksWritten)) * (session.TotalSize / int64(session.TotalChunks))
+	if receivedBytes > session.TotalSize {
+		receivedBytes = session.TotalSize
+	}
+	percent := float64(receivedBytes) / float64(session.TotalSize) * 100
+	elapsed := time.Since(session.StartTime)
+	speed := float64(receivedBytes) / elapsed.Seconds()
+
+	// Show progress bar
+	barWidth := 20
+	filledWidth := int(percent / 100 * float64(barWidth))
+	bar := strings.Repeat("=", filledWidth) + strings.Repeat(" ", barWidth-filledWidth)
+	fmt.Printf("\r[%s] %3.0f%% | %s/%s | %s | Time: %s",
+		bar, percent,
+		formatBytes(receivedBytes), formatBytes(session.TotalSize),
+		formatSpeed(speed),
+		formatDuration(elapsed))
+
 	// Check if upload is complete
 	if len(session.ChunksWritten) >= session.TotalChunks {
 		session.complete = true
-		log.Printf("Upload session %s complete: %s (%s, %d chunks)",
-			session.SessionID[:8], filepath.Base(session.FilePath),
-			formatBytes(session.TotalSize), session.TotalChunks)
+
+		// Print transfer summary
+		fmt.Printf("✓ Upload Complete\n\n")
+		fmt.Printf("Summary:\n")
+		fmt.Printf("  File:         %s\n", filepath.Base(session.FilePath))
+		fmt.Printf("  Size:         %s\n", formatBytes(session.TotalSize))
+
+		if !session.StartTime.IsZero() {
+			elapsedTotal := time.Since(session.StartTime)
+			if elapsedTotal.Seconds() > 0 {
+				avgSpeed := float64(session.TotalSize) / elapsedTotal.Seconds()
+				fmt.Printf("  Time:         %.1fs\n", elapsedTotal.Seconds())
+				fmt.Printf("  Avg Speed:    %s\n", formatSpeed(avgSpeed))
+			}
+		}
+
+		fmt.Printf("  Saved to:     %s\n", session.FilePath)
 	}
 
 	return nil
@@ -1484,6 +1519,41 @@ func formatBytes(bytes int64) string {
 		exp++
 	}
 	return fmt.Sprintf("%.1f %cB", float64(bytes)/float64(div), "KMGTPE"[exp])
+}
+
+// formatSpeed formats bytes/second into human-readable string
+func formatSpeed(bytesPerSec float64) string {
+	const unit = 1024
+	if bytesPerSec < unit {
+		return fmt.Sprintf("%.0f B/s", bytesPerSec)
+	}
+
+	units := []string{"KB/s", "MB/s", "GB/s", "TB/s"}
+	div := bytesPerSec
+	unitIndex := -1
+
+	for div >= unit && unitIndex < len(units)-1 {
+		div /= unit
+		unitIndex++
+	}
+
+	if unitIndex >= 0 && unitIndex < len(units) {
+		return fmt.Sprintf("%.1f %s", div, units[unitIndex])
+	}
+	return fmt.Sprintf("%.1f B/s", bytesPerSec)
+}
+
+// formatDuration formats a duration into human-readable string
+func formatDuration(d time.Duration) string {
+	if d < time.Second {
+		return fmt.Sprintf("%.0fms", float64(d.Milliseconds()))
+	}
+	if d < time.Minute {
+		return fmt.Sprintf("%.1fs", d.Seconds())
+	}
+	minutes := int(d.Minutes())
+	seconds := int(d.Seconds()) % 60
+	return fmt.Sprintf("%dm%ds", minutes, seconds)
 }
 
 // addChunkDuration adds chunk upload duration for performance tracking

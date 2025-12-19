@@ -3,7 +3,6 @@ package client
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -73,12 +72,15 @@ func (d *Downloader) Receive(url string, outputPath string, force bool, progress
 	// Try initial request to get headers
 	resp, err := d.client.Get(url)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("connection failed: %w\n\nPossible solutions:\n  • Check if the server is running\n  • Verify the URL is correct\n  • Make sure you're on the same network\n  • Try: warp search (to find available servers)", err)
 	}
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
 		_ = resp.Body.Close()
-		return "", fmt.Errorf("http status %d", resp.StatusCode)
+		if resp.StatusCode == 404 {
+			return "", fmt.Errorf("file not found (HTTP 404)\n\nPossible solutions:\n  • The file may have expired\n  • Check if the URL is correct\n  • Try: warp search (to find available servers)")
+		}
+		return "", fmt.Errorf("server returned error: HTTP %d\n\nTip: Check if the server is still running", resp.StatusCode)
 	}
 
 	// Check if this is text content (text/plain without attachment disposition)
@@ -112,7 +114,8 @@ func (d *Downloader) Receive(url string, outputPath string, force bool, progress
 
 	// Display download header
 	if progress != nil {
-		_, _ = fmt.Fprintf(progress, "Downloading: %s (%.1f MB)\n", name, float64(totalSize)/(1024*1024))
+		sizeStr := formatSize(totalSize)
+		_, _ = fmt.Fprintf(progress, "Downloading: %s (%s)\n", name, sizeStr)
 	}
 
 	// Check if file already exists and can be resumed
@@ -126,7 +129,7 @@ func (d *Downloader) Receive(url string, outputPath string, force bool, progress
 				return "", err
 			}
 		} else if !force {
-			return "", errors.New("destination exists; use --force to overwrite")
+			return "", fmt.Errorf("⚠️  File '%s' already exists\n\nUse --force or -f to overwrite", outputPath)
 		} else {
 			// Force overwrite
 			f, err = os.Create(outputPath)
@@ -182,14 +185,16 @@ func (d *Downloader) Receive(url string, outputPath string, force bool, progress
 	}
 
 	var src io.Reader = downloadResp.Body
+	var startTime time.Time
 	if progress != nil {
 		// Use the improved progress reader with ETA calculation
+		startTime = time.Now()
 		src = &ui.ProgressReader{
 			R:         downloadResp.Body,
 			Total:     totalSize,
 			Current:   startByte,
 			Out:       progress,
-			StartTime: time.Now(),
+			StartTime: startTime,
 		}
 	}
 
@@ -227,10 +232,50 @@ func (d *Downloader) Receive(url string, outputPath string, force bool, progress
 
 	// Print saved location
 	if progress != nil {
-		_, _ = fmt.Fprintf(progress, "Saved to: %s\n", outputPath)
+		_, _ = fmt.Fprintf(progress, "\n\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\n")
+		_, _ = fmt.Fprintf(progress, "\u2713 Transfer Complete\n\n")
+		_, _ = fmt.Fprintf(progress, "Summary:\n")
+		_, _ = fmt.Fprintf(progress, "  File:         %s\n", outputPath)
+		_, _ = fmt.Fprintf(progress, "  Size:         %s\n", formatSize(totalSize))
+
+		// Calculate transfer stats
+		if !startTime.IsZero() {
+			elapsed := time.Since(startTime)
+			if elapsed.Seconds() > 0 {
+				avgSpeed := float64(totalSize) / elapsed.Seconds()
+				speedStr := formatSpeed(avgSpeed)
+				_, _ = fmt.Fprintf(progress, "  Time:         %.1fs\n", elapsed.Seconds())
+				_, _ = fmt.Fprintf(progress, "  Avg Speed:    %s\n", speedStr)
+			}
+		}
+
+		_, _ = fmt.Fprintf(progress, "  Saved to:     %s\n", outputPath)
+		if expectedChecksum != "" {
+			_, _ = fmt.Fprintf(progress, "  Checksum:     Verified\n")
+		}
+		_, _ = fmt.Fprintf(progress, "\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\n")
 	}
 
 	return outputPath, nil
+}
+
+// formatSpeed formats bytes per second into a human-readable string
+func formatSpeed(bytesPerSec float64) string {
+	const unit = 1024
+	if bytesPerSec < unit {
+		return fmt.Sprintf("%.0f B/s", bytesPerSec)
+	}
+
+	div := float64(unit)
+	exp := 0
+	units := []string{"KB/s", "MB/s", "GB/s", "TB/s"}
+
+	for bytesPerSec >= div*unit && exp < len(units)-1 {
+		div *= unit
+		exp++
+	}
+
+	return fmt.Sprintf("%.1f %s", bytesPerSec/div, units[exp])
 }
 
 // Package-level Receive function for backward compatibility
@@ -260,4 +305,23 @@ func filenameFromResponse(resp *http.Response) string {
 		}
 	}
 	return ""
+}
+
+// formatSize formats bytes into a human-readable string with appropriate units
+func formatSize(bytes int64) string {
+	const unit = 1024
+	if bytes < unit {
+		return fmt.Sprintf("%d B", bytes)
+	}
+
+	div := int64(unit)
+	exp := 0
+	units := []string{"KB", "MB", "GB", "TB"}
+
+	for bytes >= div*unit && exp < len(units)-1 {
+		div *= unit
+		exp++
+	}
+
+	return fmt.Sprintf("%.1f %s", float64(bytes)/float64(div), units[exp])
 }

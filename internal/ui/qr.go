@@ -10,22 +10,18 @@ import (
 	qrcode "github.com/skip2/go-qrcode"
 )
 
-// PrintQR renders a QR code to the terminal as compact ASCII blocks.
+// PrintQR renders a QR code to the terminal as compact ASCII blocks with a border.
 func PrintQR(s string) error {
-	// CHANGE 1: Use qrcode.Low instead of Medium.
-	// This produces the smallest possible matrix dimension for the data.
-	qr, err := qrcode.New(s, qrcode.Low)
+	// Use qrcode.Medium for better scannability (was Low for smallest size)
+	qr, err := qrcode.New(s, qrcode.Medium)
 	if err != nil {
 		return err
 	}
 
-	// Remove library border.
+	// Remove library border - we'll add our own
 	qr.DisableBorder = true
 
 	bm := qr.Bitmap()
-
-	// CHANGE 2: Removed addQuietZone call.
-	// We rely on the terminal's natural background for contrast to save space.
 
 	w := len(bm[0])
 	cols := detectTerminalColumns()
@@ -37,11 +33,16 @@ func PrintQR(s string) error {
 	out := bufio.NewWriter(os.Stdout)
 	defer func() { _ = out.Flush() }()
 
+	// Print top border
+	border := strings.Repeat("─", w+2)
+	_, _ = out.WriteString("┌" + border + "┐\n")
+
 	h := len(bm)
 
-	// Render logic remains the same (Half-blocks)
+	// Render with our custom border (Half-blocks)
 	for y := 0; y < h; y += 2 {
 		var b strings.Builder
+		b.WriteString("│ ") // Left border with padding
 		for x := 0; x < w; x++ {
 			top := bm[y][x]
 			bottom := false
@@ -50,9 +51,13 @@ func PrintQR(s string) error {
 			}
 			b.WriteRune(pixel(top, bottom))
 		}
-		b.WriteRune('\n')
+		b.WriteString(" │\n") // Right border with padding
 		_, _ = out.WriteString(b.String())
 	}
+
+	// Print bottom border
+	_, _ = out.WriteString("└" + border + "┘\n")
+
 	return nil
 }
 
