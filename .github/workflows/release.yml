@@ -3,7 +3,7 @@ name: Build and Release
 on:
   push:
     tags:
-      - 'v*'
+      - "v*"
 
 jobs:
   build:
@@ -16,31 +16,31 @@ jobs:
           - goos: windows
             goarch: arm64
     steps:
-    - uses: actions/checkout@v4
-    - name: Set up Go
-      uses: actions/setup-go@v5
-      with:
-        go-version: '1.25'
+      - uses: actions/checkout@v4
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
 
-    - name: Test
-      run: go test ./...
+      - name: Test
+        run: go test ./...
 
-    - name: Build
-      env:
-        GOOS: ${{ matrix.goos }}
-        GOARCH: ${{ matrix.goarch }}
-      run: |
-        if [ "${{ matrix.goos }}" = "windows" ]; then
-          go build -o warp-${{ matrix.goos }}-${{ matrix.goarch }}.exe ./cmd/warp
-        else
-          go build -o warp-${{ matrix.goos }}-${{ matrix.goarch }} ./cmd/warp
-        fi
+      - name: Build
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          if [ "${{ matrix.goos }}" = "windows" ]; then
+            go build -o warp-${{ matrix.goos }}-${{ matrix.goarch }}.exe ./cmd/warp
+          else
+            go build -o warp-${{ matrix.goos }}-${{ matrix.goarch }} ./cmd/warp
+          fi
 
-    - name: Upload artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: warp-${{ matrix.goos }}-${{ matrix.goarch }}
-        path: warp-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.goos == 'windows' && '.exe' || '' }}
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: warp-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: warp-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.goos == 'windows' && '.exe' || '' }}
 
   release:
     needs: build

@@ -181,7 +181,10 @@
         background: var(--c-magenta);
         color: var(--bg);
       }
-      .action-btn:disabled { color: var(--c-dim); border-color: var(--c-dim); }
+      .action-btn:disabled {
+        color: var(--c-dim);
+        border-color: var(--c-dim);
+      }
 
       /* Progress Bar - Blocky style */
       .progress-container {
@@ -208,16 +211,16 @@
         align-items: center;
         width: 100%;
       }
-      
+
       .speed-text .rate-left {
         color: var(--c-yellow);
       }
-      
+
       .speed-text .status-right {
         color: var(--c-green);
         text-align: right;
       }
-      
+
       /* WebSocket Status Indicator */
       .ws-status {
         display: inline-block;
@@ -228,12 +231,12 @@
         margin-left: 0.5rem;
         transition: background 0.3s;
       }
-      
+
       .ws-status.connected {
         background: var(--c-green);
         box-shadow: 0 0 8px var(--c-green);
       }
-      
+
       .ws-status.error {
         background: var(--c-red);
       }
@@ -293,7 +296,8 @@
     <div class="terminal">
       <h1 class="prompt">./warp_drop --secure</h1>
       <span class="subtitle"
-        >// Parallel chunk uploads with SHA256 verification & real-time progress</span
+        >// Parallel chunk uploads with SHA256 verification & real-time
+        progress</span
       >
 
       <form method="POST" enctype="multipart/form-data" id="uploadForm">
@@ -313,7 +317,13 @@
       </form>
 
       <div class="footer">
-        <span>STATUS: IDLE<span class="ws-status" id="wsStatus" title="WebSocket Connection"></span></span>
+        <span
+          >STATUS: IDLE<span
+            class="ws-status"
+            id="wsStatus"
+            title="WebSocket Connection"
+          ></span
+        ></span>
         <span class="cursor">_</span>
       </div>
     </div>
@@ -511,7 +521,8 @@
         const file = selectedFiles[idx];
         if (!file) return Promise.resolve();
         if (!uploads[idx]) {
-          const chunkSize = manifestConfig.chunkSize || manifestDefaults.chunkSize;
+          const chunkSize =
+            manifestConfig.chunkSize || manifestDefaults.chunkSize;
           const totalChunks = Math.max(1, Math.ceil(file.size / chunkSize));
           const pending = [];
           for (let c = 0; c < totalChunks; c++) pending.push(c);
@@ -525,7 +536,8 @@
             paused: false,
             running: false,
             chunkSize,
-            maxConcurrent: manifestConfig.maxConcurrent || manifestDefaults.maxConcurrent,
+            maxConcurrent:
+              manifestConfig.maxConcurrent || manifestDefaults.maxConcurrent,
             pending,
             inFlight: new Set(),
             xhrs: new Map(),
@@ -596,7 +608,11 @@
         if (!file || !st) return;
         if (st.paused) return;
 
-        while (!st.paused && st.inFlight.size < st.maxConcurrent && st.pending.length > 0) {
+        while (
+          !st.paused &&
+          st.inFlight.size < st.maxConcurrent &&
+          st.pending.length > 0
+        ) {
           const chunkId = st.pending.shift();
           st.inFlight.add(chunkId);
           const start = chunkId * st.chunkSize;
@@ -612,27 +628,34 @@
                 st.pending.unshift(chunkId);
                 return;
               }
-              
+
               // Update completed bytes
               st.completedBytes += chunk.size;
-              
+
               // Calculate overall upload speed based on total time and bytes
               const now = performance.now();
               const elapsedSeconds = (now - st.startTime) / 1000;
               if (elapsedSeconds > 0) {
                 // Calculate instantaneous speed (last 500ms of data)
                 const timeSinceLastUpdate = (now - st.lastUpdateTime) / 1000;
-                if (timeSinceLastUpdate > 0.5) { // Update speed every 500ms
-                  const bytesSinceLastUpdate = st.completedBytes - st.lastCompletedBytes;
-                  const instantMbps = (bytesSinceLastUpdate * 8) / (timeSinceLastUpdate * 1_000_000);
+                if (timeSinceLastUpdate > 0.5) {
+                  // Update speed every 500ms
+                  const bytesSinceLastUpdate =
+                    st.completedBytes - st.lastCompletedBytes;
+                  const instantMbps =
+                    (bytesSinceLastUpdate * 8) /
+                    (timeSinceLastUpdate * 1_000_000);
                   // Use exponential moving average for smooth display
-                  st.speedMbps = st.speedMbps > 0 ? st.speedMbps * 0.7 + instantMbps * 0.3 : instantMbps;
+                  st.speedMbps =
+                    st.speedMbps > 0
+                      ? st.speedMbps * 0.7 + instantMbps * 0.3
+                      : instantMbps;
                   st.lastUpdateTime = now;
                   st.lastCompletedBytes = st.completedBytes;
                   updateRate(idx);
                 }
               }
-              
+
               updateProgress(idx);
               if (st.completedBytes >= file.size) {
                 finishUpload(idx);
@@ -690,7 +713,15 @@
           xhr.setRequestHeader("X-Upload-Offset", String(offset));
           xhr.setRequestHeader("X-Upload-Total", String(file.size));
           xhr.setRequestHeader("X-Chunk-Id", String(chunkId));
-          xhr.setRequestHeader("X-Chunk-Total", String(Math.ceil(file.size / (uploads[idx]?.chunkSize || manifestDefaults.chunkSize))));
+          xhr.setRequestHeader(
+            "X-Chunk-Total",
+            String(
+              Math.ceil(
+                file.size /
+                  (uploads[idx]?.chunkSize || manifestDefaults.chunkSize),
+              ),
+            ),
+          );
           xhr.onabort = function () {
             resolve({ aborted: true });
           };
@@ -700,7 +731,10 @@
           xhr.onreadystatechange = function () {
             if (xhr.readyState === XMLHttpRequest.DONE) {
               if (xhr.status >= 200 && xhr.status < 300) {
-                resolve({ durationMs: performance.now() - startedAt, size: chunk.size });
+                resolve({
+                  durationMs: performance.now() - startedAt,
+                  size: chunk.size,
+                });
               } else {
                 reject(new Error("chunk failed"));
               }
@@ -711,17 +745,22 @@
         xhr.promise = promise;
         return xhr;
       }
-      
+
       function generateSessionId(file) {
         // Generate a unique session ID based on file name, size, and timestamp
         const data = file.name + file.size + Date.now() + Math.random();
         let hash = 0;
         for (let i = 0; i < data.length; i++) {
           const char = data.charCodeAt(i);
-          hash = ((hash << 5) - hash) + char;
+          hash = (hash << 5) - hash + char;
           hash = hash & hash; // Convert to 32bit integer
         }
-        return 'session_' + Math.abs(hash).toString(16) + '_' + Date.now().toString(36);
+        return (
+          "session_" +
+          Math.abs(hash).toString(16) +
+          "_" +
+          Date.now().toString(36)
+        );
       }
 
       function cancelUpload(idx) {
@@ -738,19 +777,23 @@
         }
         removeFile(idx);
       }
-      
+
       // WebSocket for real-time progress updates
       function connectWebSocket() {
-        if (ws && (ws.readyState === WebSocket.CONNECTING || ws.readyState === WebSocket.OPEN)) {
+        if (
+          ws &&
+          (ws.readyState === WebSocket.CONNECTING ||
+            ws.readyState === WebSocket.OPEN)
+        ) {
           return;
         }
-        
+
         const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
         const wsUrl = `${protocol}//${window.location.host}/ws/progress`;
-        
+
         try {
           ws = new WebSocket(wsUrl);
-          
+
           ws.onopen = () => {
             console.log("WebSocket connected");
             if (wsStatusEl) wsStatusEl.className = "ws-status connected";
@@ -759,7 +802,7 @@
               wsReconnectTimer = null;
             }
           };
-          
+
           ws.onmessage = (event) => {
             try {
               const data = JSON.parse(event.data);
@@ -770,12 +813,12 @@
               console.error("WebSocket message parse error:", e);
             }
           };
-          
+
           ws.onerror = (error) => {
             console.error("WebSocket error:", error);
             if (wsStatusEl) wsStatusEl.className = "ws-status error";
           };
-          
+
           ws.onclose = () => {
             console.log("WebSocket closed");
             if (wsStatusEl) wsStatusEl.className = "ws-status";
@@ -793,18 +836,21 @@
           if (wsStatusEl) wsStatusEl.className = "ws-status error";
         }
       }
-      
+
       function handleProgressUpdate(transfers) {
         // Update UI with real-time progress from server
         for (const transfer of transfers) {
           // Match by filename
-          const idx = selectedFiles.findIndex(f => f.name === transfer.filename);
+          const idx = selectedFiles.findIndex(
+            (f) => f.name === transfer.filename,
+          );
           if (idx >= 0 && uploads[idx]) {
             const st = uploads[idx];
-            
+
             // Update progress from server's perspective
             if (transfer.total_size && transfer.bytes_written !== undefined) {
-              const serverProgress = (transfer.bytes_written / transfer.total_size) * 100;
+              const serverProgress =
+                (transfer.bytes_written / transfer.total_size) * 100;
               const bar = document.getElementById("bar-" + idx);
               if (bar) {
                 // Use max of client and server progress for smoother UX
@@ -813,24 +859,37 @@
                   bar.style.width = serverProgress.toFixed(1) + "%";
                 }
               }
-              
+
               // Update status text with percentage
               if (st.running && serverProgress < 100) {
-                setStatusText(idx, `UPLOADING... ${serverProgress.toFixed(0)}%`, "var(--c-yellow)");
+                setStatusText(
+                  idx,
+                  `UPLOADING... ${serverProgress.toFixed(0)}%`,
+                  "var(--c-yellow)",
+                );
               }
             }
-            
+
             // Update throughput from server (if available)
-            if (transfer.throughput_mbps !== undefined && transfer.throughput_mbps > 0) {
+            if (
+              transfer.throughput_mbps !== undefined &&
+              transfer.throughput_mbps > 0
+            ) {
               setRate(idx, transfer.throughput_mbps);
               st.speedMbps = transfer.throughput_mbps;
             }
-            
+
             // Update status if provided
             if (transfer.status) {
-              if (transfer.status === "complete" || transfer.status === "done") {
+              if (
+                transfer.status === "complete" ||
+                transfer.status === "done"
+              ) {
                 setStatusText(idx, "UPLOAD_COMPLETE", "var(--c-green)");
-              } else if (transfer.status === "error" || transfer.status === "failed") {
+              } else if (
+                transfer.status === "error" ||
+                transfer.status === "failed"
+              ) {
                 setStatusText(idx, "ERROR", "var(--c-red)");
               }
             }
@@ -846,11 +905,14 @@
           serverAlive = true;
           return;
         }
-        
+
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 3000); // Increased to 3s
         try {
-          const res = await fetch("/health", { cache: "no-store", signal: controller.signal });
+          const res = await fetch("/health", {
+            cache: "no-store",
+            signal: controller.signal,
+          });
           if (res.ok) {
             serverAlive = true;
             if (cursorEl) cursorEl.style.color = "var(--c-green)";
@@ -873,12 +935,16 @@
 
       async function loadManifest() {
         try {
-          const res = await fetch(window.location.pathname.replace(/\/$/, "") + "/manifest", { cache: "no-store" });
+          const res = await fetch(
+            window.location.pathname.replace(/\/$/, "") + "/manifest",
+            { cache: "no-store" },
+          );
           if (!res.ok) throw new Error("bad status");
           const data = await res.json();
           manifestConfig = {
             chunkSize: data.chunk_size || manifestDefaults.chunkSize,
-            maxConcurrent: data.max_concurrent || manifestDefaults.maxConcurrent,
+            maxConcurrent:
+              data.max_concurrent || manifestDefaults.maxConcurrent,
           };
         } catch (e) {
           manifestConfig = { ...manifestDefaults };
