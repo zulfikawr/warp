@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"fmt"
+	"github.com/zulfikawr/warp/internal/ui"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -241,9 +242,9 @@ func TestFormatBytes(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		result := formatBytes(tt.bytes)
+		result := ui.FormatBytes(tt.bytes)
 		if result != tt.expected {
-			t.Errorf("formatBytes(%d) = %s, want %s", tt.bytes, result, tt.expected)
+			t.Errorf("ui.FormatBytes(%d) = %s, want %s", tt.bytes, result, tt.expected)
 		}
 	}
 }

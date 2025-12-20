@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/zulfikawr/warp/internal/metrics"
+	"github.com/zulfikawr/warp/internal/protocol"
 	"github.com/zulfikawr/warp/internal/ui"
 )
 
@@ -27,39 +28,6 @@ func NewDownloader(client *http.Client) *Downloader {
 		client = defaultHTTPClient()
 	}
 	return &Downloader{client: client}
-}
-
-// defaultHTTPClient returns an HTTP client with optimized connection pooling and HTTP/2 support
-func defaultHTTPClient() *http.Client {
-	return &http.Client{
-		Transport: &http.Transport{
-			MaxIdleConns:          100,
-			MaxIdleConnsPerHost:   10,
-			IdleConnTimeout:       90 * time.Second,
-			DisableKeepAlives:     false,
-			ForceAttemptHTTP2:     true,
-			WriteBufferSize:       256 * 1024,
-			ReadBufferSize:        256 * 1024,
-			DisableCompression:    false, // Enable gzip compression
-			TLSHandshakeTimeout:   10 * time.Second,
-			ResponseHeaderTimeout: 30 * time.Second,
-		},
-		Timeout: 5 * time.Minute,
-	}
-}
-
-// getOptimalBufferSize determines the best buffer size based on file size
-func getOptimalBufferSize(fileSize int64) int {
-	switch {
-	case fileSize < 64*1024: // < 64KB
-		return 8192 // 8KB
-	case fileSize < 1024*1024: // < 1MB
-		return 65536 // 64KB
-	case fileSize < 100*1024*1024: // < 100MB
-		return 1048576 // 1MB
-	default: // >= 100MB
-		return 4194304 // 4MB
-	}
 }
 
 // Receive downloads from url to outputPath. If outputPath is empty, derive from headers or URL.
@@ -93,7 +61,7 @@ func (d *Downloader) Receive(url string, outputPath string, force bool, progress
 		_, err := io.Copy(os.Stdout, resp.Body)
 		_ = resp.Body.Close()
 		if err != nil {
-			return "", err
+			return "", fmt.Errorf("failed to output text to stdout: %w", err)
 		}
 		return "(stdout)", nil
 	}
@@ -126,22 +94,22 @@ func (d *Downloader) Receive(url string, outputPath string, force bool, progress
 			startByte = fi.Size()
 			f, err = os.OpenFile(outputPath, os.O_WRONLY|os.O_APPEND, 0o600)
 			if err != nil {
-				return "", err
+				return "", fmt.Errorf("failed to open file for resume: %w", err)
 			}
 		} else if !force {
-			return "", fmt.Errorf("⚠️  File '%s' already exists\n\nUse --force or -f to overwrite", outputPath)
+			return "", fmt.Errorf("%s⚠️  File '%s' already exists%s\n\nUse --force or -f to overwrite", ui.Colors.Yellow, outputPath, ui.Colors.Reset)
 		} else {
 			// Force overwrite
 			f, err = os.Create(outputPath)
 			if err != nil {
-				return "", err
+				return "", fmt.Errorf("failed to create file: %w", err)
 			}
 		}
 	} else {
 		// File doesn't exist - create new
 		f, err = os.Create(outputPath)
 		if err != nil {
-			return "", err
+			return "", fmt.Errorf("failed to create file: %w", err)
 		}
 	}
 	defer func() { _ = f.Close() }()
@@ -151,12 +119,12 @@ func (d *Downloader) Receive(url string, outputPath string, force bool, progress
 	if startByte > 0 {
 		req, err := http.NewRequest("GET", url, nil)
 		if err != nil {
-			return "", err
+			return "", fmt.Errorf("failed to create request: %w", err)
 		}
 		req.Header.Set("Range", fmt.Sprintf("bytes=%d-", startByte))
 		downloadResp, err = d.client.Do(req)
 		if err != nil {
-			return "", err
+			return "", fmt.Errorf("failed to execute resume request: %w", err)
 		}
 		defer func() { _ = downloadResp.Body.Close() }()
 
@@ -165,21 +133,21 @@ func (d *Downloader) Receive(url string, outputPath string, force bool, progress
 			_ = f.Close()
 			f, err = os.Create(outputPath)
 			if err != nil {
-				return "", err
+				return "", fmt.Errorf("failed to recreate file: %w", err)
 			}
 			defer func() { _ = f.Close() }()
 			startByte = 0
 			_ = downloadResp.Body.Close()
 			downloadResp, err = d.client.Get(url)
 			if err != nil {
-				return "", err
+				return "", fmt.Errorf("failed to restart download: %w", err)
 			}
 			defer func() { _ = downloadResp.Body.Close() }()
 		}
 	} else {
 		downloadResp, err = d.client.Get(url)
 		if err != nil {
-			return "", err
+			return "", fmt.Errorf("failed to start download: %w", err)
 		}
 		defer func() { _ = downloadResp.Body.Close() }()
 	}
@@ -199,7 +167,7 @@ func (d *Downloader) Receive(url string, outputPath string, force bool, progress
 	}
 
 	// Use adaptive buffer sizing based on file size
-	bufferSize := getOptimalBufferSize(totalSize)
+	bufferSize := protocol.GetOptimalBufferSize(totalSize)
 	buf := make([]byte, bufferSize)
 
 	// Compute checksum while downloading
@@ -207,12 +175,12 @@ func (d *Downloader) Receive(url string, outputPath string, force bool, progress
 	teeReader := io.TeeReader(src, hash)
 
 	if _, err := io.CopyBuffer(f, teeReader, buf); err != nil {
-		return "", err
+		return "", fmt.Errorf("failed to write file data: %w", err)
 	}
 
 	// Print completion message
 	if progress != nil {
-		_, _ = fmt.Fprintf(progress, "\n✓ Download complete\n")
+		_, _ = fmt.Fprintf(progress, "\n%s✓ Download complete%s\n", ui.Colors.Green, ui.Colors.Reset)
 	}
 
 	// Verify checksum if server provided one
@@ -226,15 +194,15 @@ func (d *Downloader) Receive(url string, outputPath string, force bool, progress
 		}
 		metrics.ChecksumVerifications.WithLabelValues("match").Inc()
 		if progress != nil {
-			_, _ = fmt.Fprintf(progress, "✓ Checksum verified\n")
+			_, _ = fmt.Fprintf(progress, "%s✓ Checksum verified%s\n", ui.Colors.Green, ui.Colors.Reset)
 		}
 	}
 
 	// Print saved location
 	if progress != nil {
-		_, _ = fmt.Fprintf(progress, "\n\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\n")
-		_, _ = fmt.Fprintf(progress, "\u2713 Transfer Complete\n\n")
-		_, _ = fmt.Fprintf(progress, "Summary:\n")
+		_, _ = fmt.Fprintf(progress, "\n%s━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━%s\n", ui.Colors.Dim, ui.Colors.Reset)
+		_, _ = fmt.Fprintf(progress, "%s✓ Transfer Complete%s\n\n", ui.Colors.Green, ui.Colors.Reset)
+		_, _ = fmt.Fprintf(progress, "%sSummary:%s\n", ui.Colors.Dim, ui.Colors.Reset)
 		_, _ = fmt.Fprintf(progress, "  File:         %s\n", outputPath)
 		_, _ = fmt.Fprintf(progress, "  Size:         %s\n", formatSize(totalSize))
 
@@ -243,7 +211,7 @@ func (d *Downloader) Receive(url string, outputPath string, force bool, progress
 			elapsed := time.Since(startTime)
 			if elapsed.Seconds() > 0 {
 				avgSpeed := float64(totalSize) / elapsed.Seconds()
-				speedStr := formatSpeed(avgSpeed)
+				speedStr := ui.FormatSpeed(avgSpeed)
 				_, _ = fmt.Fprintf(progress, "  Time:         %.1fs\n", elapsed.Seconds())
 				_, _ = fmt.Fprintf(progress, "  Avg Speed:    %s\n", speedStr)
 			}
@@ -251,31 +219,12 @@ func (d *Downloader) Receive(url string, outputPath string, force bool, progress
 
 		_, _ = fmt.Fprintf(progress, "  Saved to:     %s\n", outputPath)
 		if expectedChecksum != "" {
-			_, _ = fmt.Fprintf(progress, "  Checksum:     Verified\n")
+			_, _ = fmt.Fprintf(progress, "  Checksum:     %sVerified%s\n", ui.Colors.Green, ui.Colors.Reset)
 		}
-		_, _ = fmt.Fprintf(progress, "\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\n")
+		_, _ = fmt.Fprintf(progress, "%s━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━%s\n", ui.Colors.Dim, ui.Colors.Reset)
 	}
 
 	return outputPath, nil
-}
-
-// formatSpeed formats bytes per second into a human-readable string
-func formatSpeed(bytesPerSec float64) string {
-	const unit = 1024
-	if bytesPerSec < unit {
-		return fmt.Sprintf("%.0f B/s", bytesPerSec)
-	}
-
-	div := float64(unit)
-	exp := 0
-	units := []string{"KB/s", "MB/s", "GB/s", "TB/s"}
-
-	for bytesPerSec >= div*unit && exp < len(units)-1 {
-		div *= unit
-		exp++
-	}
-
-	return fmt.Sprintf("%.1f %s", bytesPerSec/div, units[exp])
 }
 
 // Package-level Receive function for backward compatibility

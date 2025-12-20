@@ -17,6 +17,9 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/zulfikawr/warp/internal/protocol"
+	"github.com/zulfikawr/warp/internal/ui"
 )
 
 // UploadConfig configures parallel upload behavior
@@ -148,7 +151,7 @@ func (s *UploadSession) Upload(ctx context.Context) error {
 
 	// Start progress reporting if configured
 	if s.Config.ProgressWriter != nil {
-		s.progressTicker = time.NewTicker(200 * time.Millisecond)
+		s.progressTicker = time.NewTicker(protocol.ProgressUpdateInterval)
 		defer s.progressTicker.Stop()
 		go s.reportProgress()
 	}
@@ -383,7 +386,7 @@ func (s *UploadSession) reportProgress() {
 
 		_, _ = fmt.Fprintf(s.Config.ProgressWriter, "\r[%s] %3.0f%% | %s / %s | %.1f Mbps | Chunks: %d/%d",
 			bar, pct,
-			formatBytes(bytesUploaded), formatBytes(bytesTotal),
+			ui.FormatBytes(bytesUploaded), ui.FormatBytes(bytesTotal),
 			speed,
 			completed, total)
 	}
@@ -394,10 +397,13 @@ func (s *UploadSession) printFinalProgress() {
 	completed, total, bytesUploaded, bytesTotal, speed := s.getProgress()
 	duration := time.Since(s.startTime).Seconds()
 
-	_, _ = fmt.Fprintf(s.Config.ProgressWriter, "\r[====================] 100%% | %s / %s | %.1f Mbps | %.2fs | Chunks: %d/%d\n",
-		formatBytes(bytesUploaded), formatBytes(bytesTotal),
+	_, _ = fmt.Fprintf(s.Config.ProgressWriter, "\r[%s====================%s] %s100%%%s | %s / %s | %.1f Mbps | %.2fs | Chunks: %d/%d\n%s✓ Upload complete%s\n",
+		ui.Colors.Green, ui.Colors.Reset,
+		ui.Colors.Green, ui.Colors.Reset,
+		ui.FormatBytes(bytesUploaded), ui.FormatBytes(bytesTotal),
 		speed, duration,
-		completed, total)
+		completed, total,
+		ui.Colors.Green, ui.Colors.Reset)
 }
 
 // Cancel stops the upload
@@ -405,20 +411,6 @@ func (s *UploadSession) Cancel() {
 	if s.cancel != nil {
 		s.cancel()
 	}
-}
-
-// formatBytes formats bytes into human-readable string
-func formatBytes(bytes int64) string {
-	const unit = 1024
-	if bytes < unit {
-		return fmt.Sprintf("%d B", bytes)
-	}
-	div, exp := int64(unit), 0
-	for n := bytes / unit; n >= unit; n /= unit {
-		div *= unit
-		exp++
-	}
-	return fmt.Sprintf("%.1f %cB", float64(bytes)/float64(div), "KMGTPE"[exp])
 }
 
 // ParallelUpload is a convenience function for uploading a file with parallel chunks

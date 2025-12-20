@@ -1,15 +1,5 @@
 package protocol
 
-import "time"
-
-const (
-	PathPrefix       = "/d/"
-	UploadPathPrefix = "/u/"
-)
-
-var (
-	// Generous timeouts for large file transfers (gigabytes over slower connections)
-	ReadTimeout  = 10 * time.Minute
-	WriteTimeout = 15 * time.Minute
-	IdleTimeout  = 5 * time.Minute
-)
+// Path prefixes and timeouts are now defined in constants.go
+// This file is kept for backwards compatibility and may contain
+// future handshake-specific logic

@@ -5,8 +5,10 @@ package server
 import (
 	"errors"
 	"fmt"
+	"github.com/zulfikawr/warp/internal/logging"
+	"github.com/zulfikawr/warp/internal/ui"
+	"go.uber.org/zap"
 	"io"
-	"log"
 	"net"
 	"net/http"
 	"os"
@@ -27,13 +29,13 @@ func sendfileZeroCopy(w http.ResponseWriter, f *os.File, offset int64, length in
 
 	conn, bufrw, err := hijacker.Hijack()
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to hijack connection: %w", err)
 	}
 	// Clean up connection on exit
 	defer func() {
 		if conn != nil {
 			if err := conn.Close(); err != nil {
-				log.Printf("Warning: failed to close connection: %v", err)
+				logging.Warn("Failed to close connection", zap.Error(err))
 			}
 		}
 	}()
@@ -46,10 +48,10 @@ func sendfileZeroCopy(w http.ResponseWriter, f *os.File, offset int64, length in
 	headers += "\r\n"
 
 	if _, err := bufrw.WriteString(headers); err != nil {
-		return err
+		return fmt.Errorf("failed to write headers: %w", err)
 	}
 	if err := bufrw.Flush(); err != nil {
-		return err
+		return fmt.Errorf("failed to flush headers: %w", err)
 	}
 
 	// Get the raw connection file descriptor
@@ -60,7 +62,7 @@ func sendfileZeroCopy(w http.ResponseWriter, f *os.File, offset int64, length in
 
 	rawConn, err := tcpConn.SyscallConn()
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to get raw connection: %w", err)
 	}
 
 	// Use sendfile(2) syscall for kernel-level zero-copy transfer
@@ -101,10 +103,10 @@ func sendfileZeroCopy(w http.ResponseWriter, f *os.File, offset int64, length in
 	})
 
 	if err != nil {
-		return err
+		return fmt.Errorf("sendfile syscall failed: %w", err)
 	}
 	if sendErr != nil {
-		return sendErr
+		return fmt.Errorf("sendfile transfer failed: %w", sendErr)
 	}
 
 	return nil
@@ -121,7 +123,7 @@ func checkDiskSpace(path string, required int64) error {
 	// Keep 1GB buffer for system operations
 	if available-required < 1<<30 {
 		return fmt.Errorf("insufficient disk space: need %s, have %s available",
-			formatBytes(required), formatBytes(available))
+			ui.FormatBytes(required), ui.FormatBytes(available))
 	}
 	return nil
 }

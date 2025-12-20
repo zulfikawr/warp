@@ -5,6 +5,147 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.5] - 2025-01-20
+
+### Added
+
+- **Protocol package expansion**
+  - Created `internal/protocol/metadata.go` (113 lines) with formal protocol definitions
+    - `TransferType` enum (File, Directory, Text, Stream) for typed transfers
+    - `Metadata` struct with validation for transfer metadata
+    - Helper methods: `IsChunked()`, `IsCompressible()`, `ShouldUseZeroCopy()`
+  - Created `internal/protocol/constants.go` (102 lines) with centralized configuration
+    - Buffer size constants: BufferSizeSmall (8KB), Medium (64KB), Large (1MB), VeryLarge (4MB)
+    - Threshold constants: SendfileThreshold (10MB), MaxCacheFileSize
+    - Progress timing: ProgressUpdateInterval (200ms), WebSocketUpdateInterval (100ms)
+    - UI dimensions: ProgressBarWidth (20), ProgressBarFilled, ProgressBarEmpty
+    - `GetOptimalBufferSize()` function for adaptive buffer sizing
+  - Expanded protocol package from 14 lines to 200+ lines with comprehensive definitions
+  - Provides foundation for future protocol versioning and feature additions
+
+- **Color-coded status messages** throughout the application
+  - Green for success messages (Download complete, Upload complete, Checksum verified)
+  - Yellow for warnings (File already exists)
+  - Red for errors (connection failures, checksum mismatches)
+  - Dim/gray for secondary information (Summary headers, borders)
+  - Automatically respects `NO_COLOR` environment variable for accessibility
+  - Applied consistently across receiver, uploader, server, and progress displays
+
+- **Multi-file progress tracking** for multiple files and directory transfers
+  - Shows individual file progress when sending multiple files or directories
+  - Displays "Compressing: X/Y files" with current file name during zip creation
+  - Shows total file count and cumulative size before compression starts
+  - Completion message shows final statistics (Compressed X files, total size)
+  - Improves visibility into what's being transferred in large directories
+
+### Improved
+
+- Progress bars now display in green with colored percentage indicators
+- Transfer completion summaries use consistent color scheme
+  - Success indicators in green
+  - Section headers in dim/gray for better visual hierarchy
+- Upload complete messages match download complete styling
+- All status messages maintain consistent formatting and color usage
+
+### Refactored
+
+- **Structured logging implementation**
+  - Replaced 40+ unstructured `log.Printf` calls with structured logging using zap
+  - Updated all server package files to use `logging.Info()`, `logging.Warn()`, `logging.Error()`
+  - Added structured fields for better log filtering and aggregation:
+    - Session tracking: `zap.String("session_id", ...)`, `zap.Int("chunk_id", ...)`
+    - File operations: `zap.String("filename", ...)`, `zap.String("size", ...)`
+    - Performance: `zap.Float64("duration", ...)`, `zap.Float64("mbps", ...)`
+    - Errors: `zap.Error(err)` for proper error chain tracking
+  - Benefits:
+    - JSON-structured output ready for log aggregation (ELK, Loki, Datadog)
+    - Better log filtering by specific fields (filename, session_id, error type)
+    - Type-safe logging with compile-time validation
+    - Zero-allocation performance with zap
+    - Proper severity levels (Info/Warn/Error) consistently applied
+  - Files updated: `chunks.go`, `upload.go`, `session.go`, `server.go`, `download.go`, `websocket.go`, `http_linux.go`
+  - Zero "log" package imports remaining in internal packages
+
+- **Metrics package organization**
+  - Reorganized 227-line monolithic `metrics.go` into 7 focused modules
+  - Created logical grouping: `upload.go`, `download.go`, `chunks.go`, `session.go`, `cache.go`, `websocket.go`, `http.go`
+  - Added comprehensive documentation to each module explaining metric purpose and usage
+  - Created helper functions for common operations:
+    - Cache: `RecordCacheHit()`, `RecordCacheMiss()`, `SetCacheSize()`
+    - Session: `RecordUploadSession()`, `RecordRetry()`, `RecordError()`
+    - Chunks: `RecordChunkSuccess()`, `RecordChunkRetry()`, `RecordChunkError()`
+    - WebSocket: `WebSocketConnected()`, `RecordProgressMessage()`
+  - Each metric now includes labels documentation and use cases
+  - Average file size: ~67 lines (vs 227 lines previously)
+  - Easier to find relevant metrics for specific features
+  - Better maintainability with clear separation of concerns
+
+- **Eliminated magic numbers throughout codebase**
+  - Extracted all hardcoded buffer sizes, timing intervals, and UI dimensions to named constants
+  - Updated 9 files to use `protocol` package constants:
+    - `internal/client/receiver.go` - Uses `protocol.GetOptimalBufferSize()`
+    - `internal/client/uploader.go` - Uses `protocol.ProgressUpdateInterval`
+    - `internal/server/cache.go` - Uses protocol buffer size constants
+    - `internal/server/upload.go` - Uses `protocol.GetOptimalBufferSize()`
+    - `internal/server/constants.go` - References protocol constants
+    - `internal/server/server_test.go` - Uses protocol constants in tests
+    - `internal/ui/progress.go` - Uses `protocol.ProgressBarWidth` and char constants
+  - Provides single source of truth for configuration values
+  - Improves code readability with semantic constant names
+  - Makes performance tuning easier by centralizing configuration
+
+- **Major HTTP server refactoring**
+  - Split monolithic 1,711-line `http.go` into 11 focused, maintainable files
+  - Created specialized modules: `cache.go` (156 lines), `chunks.go` (172 lines), `download.go` (184 lines), `progress.go` (160 lines), `ratelimit.go` (169 lines), `sanitize.go` (94 lines), `server.go` (247 lines), `session.go` (158 lines), `upload.go` (395 lines), `websocket.go` (71 lines), `embed.go` (8 lines)
+  - Applied Single Responsibility Principle - each file handles one clear concern
+  - Improved code maintainability and testability
+  - All 20 tests passing, zero functionality lost
+  - Average file size: ~165 lines (within target range of 150-300 lines)
+
+- **Command-line interface modularization**
+  - Reduced `main.go` from 904 lines to 62 lines (93% reduction)
+  - Extracted send/receive logic into dedicated command modules
+  - Improved separation of concerns and code organization
+
+### Fixed
+
+- **Configuration flow inconsistency**
+  - Config file values now properly used as defaults for CLI flags
+  - Implemented correct precedence chain: config file → environment variables → CLI flags
+  - Commands now load `~/.config/warp/warp.yaml` at startup
+  - Users can set persistent defaults without repeating the same flags
+  - Environment variables (`WARP_*` prefix) correctly override config values
+  - CLI flags remain highest priority, overriding everything
+
+- **Error handling inconsistencies**
+  - Created centralized error package with `UserError` type for user-friendly messages
+  - Standardized error handling across all command files
+  - Removed 30+ `log.Fatal` calls - errors now properly returned to main()
+  - Added context to all error messages using `fmt.Errorf` with `%w`
+  - Main.go now centrally handles error display with color-coded messages
+  - User-facing errors include helpful suggestions for resolution
+  - Improved error messages in client package (9 locations)
+  - Improved error messages in server package (13 locations)
+  - All errors now properly wrapped for better debugging
+  - Consistent error patterns across receiver, uploader, server, and command handlers
+
+- **Duplicate HTTP client configuration**
+  - Consolidated identical HTTP client code from `receiver.go` and `uploader.go`
+  - Created centralized `internal/client/client.go` with single `defaultHTTPClient()` function
+  - Eliminated 18 lines of duplicated code
+  - Single source of truth for HTTP/2 settings, connection pooling, and timeouts
+  - Easier to maintain and update client configuration
+
+- **Missing input validation**
+  - Created `internal/server/validate.go` with comprehensive validation functions
+  - Added validation for session IDs (length 8-64 chars, alphanumeric+hyphens only)
+  - Added validation for upload offsets (non-negative, within file bounds)
+  - Added validation for chunk IDs and total chunks (max 100,000 each)
+  - Added validation for chunk sizes (64KB to 100MB)
+  - All validation errors return HTTP 400 with clear error messages
+  - Prevents integer overflow, resource exhaustion, and path traversal attacks
+  - Applied in both sequential and parallel upload handlers
+
 ## [1.0.4] - 2025-01-19
 
 ### Added

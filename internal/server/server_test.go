@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/zulfikawr/warp/internal/crypto"
+	"github.com/zulfikawr/warp/internal/protocol"
+	"github.com/zulfikawr/warp/internal/ui"
 )
 
 func TestServerValidAndInvalidToken(t *testing.T) {
@@ -162,9 +164,9 @@ func TestFormatBytes(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		got := formatBytes(tt.bytes)
+		got := ui.FormatBytes(tt.bytes)
 		if got != tt.want {
-			t.Errorf("formatBytes(%d) = %s, want %s", tt.bytes, got, tt.want)
+			t.Errorf("ui.FormatBytes(%d) = %s, want %s", tt.bytes, got, tt.want)
 		}
 	}
 }
@@ -227,16 +229,16 @@ func TestGetOptimalBufferSize(t *testing.T) {
 		fileSize int64
 		wantSize int
 	}{
-		{1000, 8192},                 // Small file
-		{100000, 65536},              // Medium file
-		{10 * 1024 * 1024, 1048576},  // Large file
-		{500 * 1024 * 1024, 4194304}, // Very large file
+		{1000, protocol.BufferSizeSmall},                  // Small file
+		{100000, protocol.BufferSizeMedium},               // Medium file
+		{10 * 1024 * 1024, protocol.BufferSizeLarge},      // Large file
+		{500 * 1024 * 1024, protocol.BufferSizeVeryLarge}, // Very large file
 	}
 
 	for _, tt := range tests {
-		got := getOptimalBufferSize(tt.fileSize)
+		got := protocol.GetOptimalBufferSize(tt.fileSize)
 		if got != tt.wantSize {
-			t.Errorf("getOptimalBufferSize(%d) = %d, want %d", tt.fileSize, got, tt.wantSize)
+			t.Errorf("protocol.GetOptimalBufferSize(%d) = %d, want %d", tt.fileSize, got, tt.wantSize)
 		}
 	}
 }

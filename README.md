@@ -567,24 +567,53 @@ Downloading: file.zip (1.2 GB)
 | **Discovery** | `internal/discovery/` | mDNS/DNS-SD advertisement and browsing                              |
 | **UI**        | `internal/ui/`        | Progress bars, QR codes, speed/ETA                                  |
 | **Config**    | `internal/config/`    | YAML parsing, environment variables                                 |
-| **Metrics**   | `internal/metrics/`   | Prometheus integration                                              |
+| **Metrics**   | `internal/metrics/`   | Prometheus metrics (upload, download, cache, session, WebSocket)    |
 | **Network**   | `internal/network/`   | Network utilities, IP discovery                                     |
-| **Protocol**  | `internal/protocol/`  | Protocol handshake                                                  |
+| **Protocol**  | `internal/protocol/`  | Transfer metadata, constants, buffer sizing, protocol definitions   |
 | **Logging**   | `internal/logging/`   | Structured logging                                                  |
 
 ### Project Structure
 
 ```
 warp/
-├── cmd/warp/main.go                  # CLI entry point
+├── cmd/warp/                         # CLI application
+│   ├── main.go                       # Entry point (62 lines)
+│   ├── commands/                     # Command implementations
+│   │   ├── send.go                   # Send command
+│   │   ├── receive.go                # Receive command
+│   │   ├── host.go                   # Host command
+│   │   ├── search.go                 # Search command
+│   │   └── config.go                 # Config command
+│   ├── completion/                   # Shell completions
+│   │   ├── bash.go                   # Bash completion
+│   │   ├── zsh.go                    # Zsh completion
+│   │   ├── fish.go                   # Fish completion
+│   │   └── powershell.go             # PowerShell completion
+│   └── ui/                           # CLI UI components
+│       ├── colors.go                 # Color scheme management
+│       └── help.go                   # Help text formatting
 ├── internal/
 │   ├── client/                       # Download client
+│   │   ├── client.go                 # Shared HTTP client configuration
 │   │   ├── receiver.go               # HTTP client with dependency injection
 │   │   ├── receiver_test.go
 │   │   ├── uploader.go               # Parallel uploader with buffer pooling
 │   │   └── uploader_test.go
+│   ├── errors/                       # Error handling
+│   │   └── errors.go                 # UserError type with suggestions
 │   ├── server/                       # HTTP server
-│   │   ├── http.go                   # Core server with rate limiting, TCP tuning
+│   │   ├── server.go                 # Server lifecycle, core handlers
+│   │   ├── download.go               # Download handler with compression, rate limiting
+│   │   ├── upload.go                 # Multipart & raw upload handlers
+│   │   ├── chunks.go                 # Parallel chunk upload processing
+│   │   ├── session.go                # Upload session management
+│   │   ├── cache.go                  # Buffer pools, checksum caching
+│   │   ├── progress.go               # Multi-file progress display
+│   │   ├── websocket.go              # Real-time progress streaming
+│   │   ├── ratelimit.go              # Per-client rate limiting
+│   │   ├── sanitize.go               # Filename sanitization (fuzz-tested)
+│   │   ├── validate.go               # Input validation for uploads
+│   │   ├── embed.go                  # HTML template embedding
 │   │   ├── http_linux.go             # Zero-copy sendfile (offset fix)
 │   │   ├── http_other.go             # Non-Linux fallback
 │   │   ├── constants.go              # Configuration constants
@@ -605,8 +634,10 @@ warp/
 │   ├── network/                      # Network utilities
 │   │   ├── ip.go
 │   │   └── ip_test.go
-│   ├── protocol/                     # Protocol handshake
-│   │   ├── handshake.go
+│   ├── protocol/                     # Protocol definitions & constants
+│   │   ├── constants.go              # Buffer sizes, thresholds, intervals
+│   │   ├── metadata.go               # Transfer metadata & validation
+│   │   ├── handshake.go              # Protocol handshake
 │   │   └── handshake_test.go
 │   ├── ui/                           # Progress, QR codes
 │   │   ├── progress.go               # Pre-computed progress bars
@@ -615,8 +646,15 @@ warp/
 │   ├── config/                       # Configuration with error handling
 │   │   ├── config.go
 │   │   └── config_test.go
-│   ├── metrics/                      # Prometheus (errors, retries, duration)
-│   │   ├── metrics.go
+│   ├── metrics/                      # Prometheus metrics (modular)
+│   │   ├── metrics.go                # Package documentation
+│   │   ├── upload.go                 # Upload performance metrics
+│   │   ├── download.go               # Download performance metrics
+│   │   ├── chunks.go                 # Parallel chunk metrics
+│   │   ├── session.go                # Session & error tracking
+│   │   ├── cache.go                  # Cache performance metrics
+│   │   ├── websocket.go              # WebSocket metrics
+│   │   ├── http.go                   # HTTP & rate limiting
 │   │   └── metrics_test.go
 │   └── logging/                      # Lazy initialization logging
 │       ├── logger.go

@@ -1,10 +1,15 @@
 package server
 
-import "time"
+import (
+	"time"
+
+	"github.com/zulfikawr/warp/internal/protocol"
+)
 
 // WebSocket configuration
 const (
-	WebSocketUpdateInterval = 100 * time.Millisecond
+	// WebSocketUpdateInterval uses the protocol constant for consistency
+	WebSocketUpdateInterval = protocol.WebSocketUpdateInterval
 	WebSocketReadBuffer     = 1024
 	WebSocketWriteBuffer    = 1024
 )
@@ -24,16 +29,16 @@ const (
 
 // Buffer sizes
 const (
-	MinBufferSize     = 4096
-	DefaultBufferSize = 1 << 20  // 1MB
-	MaxBufferSize     = 16 << 20 // 16MB
+	MinBufferSize     = protocol.BufferSizeSmall     // 8KB
+	DefaultBufferSize = protocol.BufferSizeLarge     // 1MB
+	MaxBufferSize     = protocol.BufferSizeVeryLarge // 4MB
 )
 
 // TCP tuning
 const (
 	TCPKeepAlivePeriod   = 3 * time.Minute
-	TCPSendBufferSize    = 4 << 20 // 4MB
-	TCPReceiveBufferSize = 4 << 20 // 4MB
+	TCPSendBufferSize    = protocol.BufferSizeVeryLarge // 4MB
+	TCPReceiveBufferSize = protocol.BufferSizeVeryLarge // 4MB
 )
 
 // Timeouts

@@ -5,14 +5,17 @@ import (
 	"io"
 	"strings"
 	"time"
+
+	"github.com/zulfikawr/warp/internal/protocol"
 )
 
 // Pre-computed progress bars to eliminate string allocations (~1000/sec during transfer)
-var progressBars [21]string
+var progressBars [protocol.ProgressBarWidth + 1]string
 
 func init() {
-	for i := 0; i <= 20; i++ {
-		progressBars[i] = strings.Repeat("=", i) + strings.Repeat(" ", 20-i)
+	// Pre-compute progress bars
+	for i := 0; i <= protocol.ProgressBarWidth; i++ {
+		progressBars[i] = strings.Repeat(protocol.ProgressBarFilled, i) + strings.Repeat(protocol.ProgressBarEmpty, protocol.ProgressBarWidth-i)
 	}
 }
 
@@ -45,7 +48,7 @@ func (p *ProgressReader) Read(b []byte) (int, error) {
 			if rate > 0 {
 				etaSec := float64(remaining) / rate
 				eta := time.Duration(etaSec * float64(time.Second))
-				etaStr = formatDuration(eta)
+				etaStr = FormatDuration(eta)
 			}
 		}
 
@@ -53,24 +56,24 @@ func (p *ProgressReader) Read(b []byte) (int, error) {
 		speedStr := ""
 		if elapsed.Seconds() > 0 {
 			bytesPerSec := float64(p.Current) / elapsed.Seconds()
-			speedStr = formatSpeed(bytesPerSec)
+			speedStr = FormatSpeed(bytesPerSec)
 		}
 
 		// Format sizes with smarter units
 		currentSize := formatSize(p.Current)
 		totalSize := formatSize(p.Total)
-		elapsedStr := formatDuration(elapsed)
+		elapsedStr := FormatDuration(elapsed)
 
 		// Format progress bar with detailed information
 		if etaStr != "" && speedStr != "" {
-			_, _ = fmt.Fprintf(p.Out, "\r[%-20s] %3.0f%% | %s/%s | %s | Time: %s | ETA: %s",
-				bar(pct), pct, currentSize, totalSize, speedStr, elapsedStr, etaStr)
+			_, _ = fmt.Fprintf(p.Out, "\r[%s%-*s%s] %s%3.0f%%%s | %s/%s | %s | Time: %s | ETA: %s",
+				Colors.Green, protocol.ProgressBarWidth, bar(pct), Colors.Reset, Colors.Green, pct, Colors.Reset, currentSize, totalSize, speedStr, elapsedStr, etaStr)
 		} else if speedStr != "" {
-			_, _ = fmt.Fprintf(p.Out, "\r[%-20s] %3.0f%% | %s/%s | %s | Time: %s",
-				bar(pct), pct, currentSize, totalSize, speedStr, elapsedStr)
+			_, _ = fmt.Fprintf(p.Out, "\r[%s%-*s%s] %s%3.0f%%%s | %s/%s | %s | Time: %s",
+				Colors.Green, protocol.ProgressBarWidth, bar(pct), Colors.Reset, Colors.Green, pct, Colors.Reset, currentSize, totalSize, speedStr, elapsedStr)
 		} else {
-			_, _ = fmt.Fprintf(p.Out, "\r[%-20s] %3.0f%% | %s/%s",
-				bar(pct), pct, currentSize, totalSize)
+			_, _ = fmt.Fprintf(p.Out, "\r[%s%-*s%s] %s%3.0f%%%s | %s/%s",
+				Colors.Green, protocol.ProgressBarWidth, bar(pct), Colors.Reset, Colors.Green, pct, Colors.Reset, currentSize, totalSize)
 		}
 	}
 	return n, err
@@ -82,46 +85,10 @@ func bar(pct float64) string {
 	if filled < 0 {
 		filled = 0
 	}
-	if filled > 20 {
-		filled = 20
+	if filled > protocol.ProgressBarWidth {
+		filled = protocol.ProgressBarWidth
 	}
 	return progressBars[filled]
-}
-
-// formatDuration formats a duration into a human-readable string
-func formatDuration(d time.Duration) string {
-	d = d.Round(time.Second)
-	h := d / time.Hour
-	d -= h * time.Hour
-	m := d / time.Minute
-	d -= m * time.Minute
-	s := d / time.Second
-
-	if h > 0 {
-		return fmt.Sprintf("%dh%02dm%02ds", h, m, s)
-	} else if m > 0 {
-		return fmt.Sprintf("%dm%02ds", m, s)
-	}
-	return fmt.Sprintf("%ds", s)
-}
-
-// formatSpeed formats bytes per second into a human-readable string
-func formatSpeed(bytesPerSec float64) string {
-	const unit = 1024
-	if bytesPerSec < unit {
-		return fmt.Sprintf("%.0f B/s", bytesPerSec)
-	}
-
-	div := float64(unit)
-	exp := 0
-	units := []string{"KB/s", "MB/s", "GB/s", "TB/s"}
-
-	for bytesPerSec >= div*unit && exp < len(units)-1 {
-		div *= unit
-		exp++
-	}
-
-	return fmt.Sprintf("%.1f %s", bytesPerSec/div, units[exp])
 }
 
 // formatSize formats bytes into a human-readable string with appropriate units

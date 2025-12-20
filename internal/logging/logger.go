@@ -26,6 +26,8 @@ func initLogger() {
 		config.DisableStacktrace = true
 		config.DisableCaller = true
 		config.Level = level
+		// Use human-readable timestamp format
+		config.EncoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder
 
 		var err error
 		logger, err = config.Build()
