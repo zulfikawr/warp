@@ -81,6 +81,12 @@ const (
 
 	// UploadPathPrefix is the URL path prefix for uploads
 	UploadPathPrefix = "/u/"
+
+	// PAKEInitPath is the URL path for PAKE initialization
+	PAKEInitPath = "/pake/init"
+
+	// PAKEVerifyPath is the URL path for PAKE verification
+	PAKEVerifyPath = "/pake/verify"
 )
 
 // GetOptimalBufferSize returns the best buffer size for a given file size

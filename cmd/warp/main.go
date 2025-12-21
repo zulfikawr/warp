@@ -54,6 +54,8 @@ func main() {
 		err = commands.Search(filterGlobalFlags(os.Args[2:]))
 	case "config":
 		err = commands.Config(filterGlobalFlags(os.Args[2:]))
+	case "speedtest":
+		err = commands.Speedtest(filterGlobalFlags(os.Args[2:]))
 	case "completion":
 		err = completion.Generate(filterGlobalFlags(os.Args[2:]))
 	case "-h", "--help":

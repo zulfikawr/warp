@@ -40,6 +40,7 @@ func Send(args []string) error {
 	stdin := fs.Bool("stdin", false, "read from stdin")
 	rateLimit := fs.Float64("rate-limit", cfg.RateLimitMbps, "bandwidth limit in Mbps")
 	cacheSize := fs.Int64("cache-size", cfg.CacheSizeMB, "file cache size in MB")
+	noEncrypt := fs.Bool("no-encrypt", false, "disable PAKE encryption")
 	if err := fs.Parse(filteredArgs); err != nil {
 		return fmt.Errorf("failed to parse flags: %w", err)
 	}
@@ -54,18 +55,26 @@ func Send(args []string) error {
 		return fmt.Errorf("failed to generate token: %w", err)
 	}
 
+	var pakeCode string
+	if !*noEncrypt {
+		pakeCode, err = crypto.GenerateCode(nil)
+		if err != nil {
+			return fmt.Errorf("failed to generate PAKE code: %w", err)
+		}
+	}
+
 	var srv *server.Server
 
 	// Handle text sharing
 	if *text != "" {
-		srv = &server.Server{InterfaceName: *iface, Token: tok, TextContent: *text}
+		srv = &server.Server{InterfaceName: *iface, Token: tok, PAKECode: pakeCode, TextContent: *text}
 	} else if *stdin {
 		// Read from stdin
 		data, err := io.ReadAll(os.Stdin)
 		if err != nil {
 			return fmt.Errorf("failed to read from stdin: %w", err)
 		}
-		srv = &server.Server{InterfaceName: *iface, Token: tok, TextContent: string(data)}
+		srv = &server.Server{InterfaceName: *iface, Token: tok, PAKECode: pakeCode, TextContent: string(data)}
 	} else {
 		// Handle file/directory
 		if fs.NArg() < 1 {
@@ -81,6 +90,7 @@ func Send(args []string) error {
 		srv = &server.Server{
 			InterfaceName: *iface,
 			Token:         tok,
+			PAKECode:      pakeCode,
 			SrcPath:       path,
 		}
 	}
@@ -97,6 +107,7 @@ func Send(args []string) error {
 
 	// Display server info
 	fmt.Fprintf(os.Stderr, "Server started on :%d\n", srv.Port)
+	fmt.Fprintf(os.Stderr, "PAKE Code: %s%s%s\n", ui.C.Bold, srv.PAKECode, ui.C.Reset)
 	serviceName := fmt.Sprintf("warp-%s._warp._tcp.local.", tok[:6])
 	fmt.Fprintf(os.Stderr, "Service: %s\n", serviceName)
 	fmt.Fprintf(os.Stderr, "Local URL: %s\n", url)
@@ -131,7 +142,7 @@ func sendHelp() {
 	fmt.Println()
 	fmt.Println(ui.C.Bold + "Description:" + ui.C.Reset)
 	fmt.Println("  Start a server and share a file, directory, or text with another device.")
-	fmt.Println("  The recipient can download using the generated URL or token.")
+	fmt.Println("  Generates a secure PAKE code for easy transfer and end-to-end encryption.")
 	fmt.Println()
 	fmt.Println(ui.C.Bold + "Flags:" + ui.C.Reset)
 	fmt.Println("  " + ui.C.Yellow + "-p, --port" + ui.C.Reset + "        choose specific port (default: random)")
@@ -141,15 +152,15 @@ func sendHelp() {
 	fmt.Println("  " + ui.C.Yellow + "--rate-limit" + ui.C.Reset + "      limit download bandwidth in Mbps (0 = unlimited)")
 	fmt.Println("  " + ui.C.Yellow + "--cache-size" + ui.C.Reset + "      file cache size in MB (default: 100)")
 	fmt.Println("  " + ui.C.Yellow + "--no-qr" + ui.C.Reset + "           skip printing the QR code")
-	fmt.Println("  " + ui.C.Yellow + "--encrypt" + ui.C.Reset + "         encrypt transfer with password (prompts if not provided)")
+	fmt.Println("  " + ui.C.Yellow + "--no-encrypt" + ui.C.Reset + "       disable encryption (not recommended)")
 	fmt.Println("  " + ui.C.Yellow + "-v, --verbose" + ui.C.Reset + "     verbose logging (use -vv or -vvv for more detail)")
 	fmt.Println()
 	fmt.Println(ui.C.Bold + "Examples:" + ui.C.Reset)
-	fmt.Println("  " + ui.C.Green + "warp send" + ui.C.Reset + " ./photo.jpg                    " + ui.C.Dim + "# Share a file" + ui.C.Reset)
-	fmt.Println("  " + ui.C.Green + "warp send" + ui.C.Reset + " ./documents/                   " + ui.C.Dim + "# Share a directory" + ui.C.Reset)
-	fmt.Println("  " + ui.C.Green + "warp send" + ui.C.Reset + " --text \"hello world\"           " + ui.C.Dim + "# Share text" + ui.C.Reset)
-	fmt.Println("  echo \"hello\" | " + ui.C.Green + "warp send" + ui.C.Reset + " --stdin         " + ui.C.Dim + "# Read from stdin" + ui.C.Reset)
-	fmt.Println("  " + ui.C.Green + "warp send" + ui.C.Reset + " -p 8080 ./file.zip             " + ui.C.Dim + "# Use specific port" + ui.C.Reset)
-	fmt.Println("  " + ui.C.Green + "warp send" + ui.C.Reset + " --rate-limit 10 ./video.mp4    " + ui.C.Dim + "# Limit to 10 Mbps" + ui.C.Reset)
-	fmt.Println("  " + ui.C.Green + "warp send" + ui.C.Reset + " --encrypt ./secret.pdf         " + ui.C.Dim + "# Encrypted transfer" + ui.C.Reset)
+	fmt.Println("  " + ui.C.Green + "warp send" + ui.C.Reset + " ./photo.jpg                    " + ui.C.Dim + "# Share a file (encrypted)" + ui.C.Reset)
+	fmt.Println("  " + ui.C.Green + "warp send" + ui.C.Reset + " ./documents/                   " + ui.C.Dim + "# Share a directory (encrypted)" + ui.C.Reset)
+	fmt.Println("  " + ui.C.Green + "warp send" + ui.C.Reset + " --text \"hello world\"           " + ui.C.Dim + "# Share text (encrypted)" + ui.C.Reset)
+	fmt.Println("  echo \"hello\" | " + ui.C.Green + "warp send" + ui.C.Reset + " --stdin         " + ui.C.Dim + "# Read from stdin (encrypted)" + ui.C.Reset)
+	fmt.Println("  " + ui.C.Green + "warp send" + ui.C.Reset + " -p 8080 ./file.zip             " + ui.C.Dim + "# Use specific port (encrypted)" + ui.C.Reset)
+	fmt.Println("  " + ui.C.Green + "warp send" + ui.C.Reset + " --rate-limit 10 ./video.mp4    " + ui.C.Dim + "# Limit to 10 Mbps (encrypted)" + ui.C.Reset)
+	fmt.Println("  " + ui.C.Green + "warp send" + ui.C.Reset + " --no-encrypt ./public.pdf      " + ui.C.Dim + "# Unencrypted transfer" + ui.C.Reset)
 }

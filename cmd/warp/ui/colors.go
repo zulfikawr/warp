@@ -11,6 +11,7 @@ type Color struct {
 	Yellow  string
 	Magenta string
 	Red     string
+	Cyan    string
 }
 
 // C is the global color scheme instance
@@ -34,5 +35,6 @@ func SetColorsEnabled(enabled bool) {
 		Yellow:  "\033[33m",
 		Magenta: "\033[35m",
 		Red:     "\033[31m",
+		Cyan:    "\033[36m",
 	}
 }

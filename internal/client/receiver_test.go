@@ -15,7 +15,7 @@ func TestReceiveCreatesFile(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	out, err := Receive(ts.URL, "", true, io.Discard)
+	out, err := Receive(ts.URL, "", true, io.Discard, nil)
 	if err != nil {
 		t.Fatalf("Receive error: %v", err)
 	}

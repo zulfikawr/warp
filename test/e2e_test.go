@@ -133,7 +133,7 @@ func TestE2E_FileTransfer(t *testing.T) {
 
 			// Receive file
 			logTest(t, "Downloading file...")
-			out, err := client.Receive(url, "", true, io.Discard)
+			out, err := client.Receive(url, "", true, io.Discard, nil)
 			assertNoError(t, err, "Download file")
 			defer func() { _ = os.Remove(out) }()
 
@@ -197,7 +197,7 @@ func TestE2E_TextSharing(t *testing.T) {
 
 			// Capture stdout
 			var buf bytes.Buffer
-			result, err := client.Receive(url, "", false, &buf)
+			result, err := client.Receive(url, "", false, &buf, nil)
 			assertNoError(t, err, "Receive text")
 
 			assertEqual(t, "(stdout)", result, "Output destination")
@@ -379,7 +379,7 @@ func TestE2E_ResumableDownload(t *testing.T) {
 	// Resume download
 	logTest(t, "Resuming download from 5MB offset...")
 	start := time.Now()
-	result, err := client.Receive(url, outName, true, io.Discard)
+	result, err := client.Receive(url, outName, true, io.Discard, nil)
 	assertNoError(t, err, "Resume download")
 	duration := time.Since(start)
 
@@ -442,7 +442,7 @@ func TestE2E_DirectoryZipTransfer(t *testing.T) {
 	// Download (should be zipped)
 	logTest(t, "Downloading directory as ZIP...")
 	start := time.Now()
-	out, err := client.Receive(url, "", true, io.Discard)
+	out, err := client.Receive(url, "", true, io.Discard, nil)
 	assertNoError(t, err, "Download directory")
 	defer func() { _ = os.Remove(out) }()
 	duration := time.Since(start)
@@ -586,7 +586,7 @@ func TestE2E_ConcurrentTransfers(t *testing.T) {
 	for i := 0; i < numClients; i++ {
 		go func(id int) {
 			logTest(t, "Client %d: Starting download", id)
-			out, err := client.Receive(url, "", true, io.Discard)
+			out, err := client.Receive(url, "", true, io.Discard, nil)
 			if err != nil {
 				t.Errorf("Client %d failed: %v", id, err)
 				done <- false
@@ -749,7 +749,7 @@ func TestE2E_Performance(t *testing.T) {
 			defer func() { _ = srv.Shutdown() }()
 
 			start := time.Now()
-			out, err := client.Receive(url, "", true, io.Discard)
+			out, err := client.Receive(url, "", true, io.Discard, nil)
 			duration := time.Since(start)
 
 			assertNoError(t, err, "Download")

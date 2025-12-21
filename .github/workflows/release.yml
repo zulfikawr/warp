@@ -50,11 +50,20 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        
+      - name: Extract release notes
+        run: |
+          # This awk command finds the line starting with "## [TAG]" 
+          # and prints lines until it hits the next "## [" header.
+          awk "/^## \[${{ github.ref_name }}\]/{flag=1;next}/^## \[/{flag=0}flag" CHANGELOG.md > RELEASE_NOTES.md
+
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
           path: dist
+          
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
           files: dist/*/*
+          body_path: RELEASE_NOTES.md 

@@ -1,6 +1,7 @@
 package client
 
 import (
+	"compress/gzip"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -11,6 +12,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/klauspost/compress/zstd"
+
+	"github.com/zulfikawr/warp/internal/crypto"
 	"github.com/zulfikawr/warp/internal/metrics"
 	"github.com/zulfikawr/warp/internal/protocol"
 	"github.com/zulfikawr/warp/internal/ui"
@@ -30,10 +34,25 @@ func NewDownloader(client *http.Client) *Downloader {
 	return &Downloader{client: client}
 }
 
+// readCloserAdapter adapts an io.Reader and a close func to an io.ReadCloser
+type readCloserAdapter struct {
+	r io.Reader
+	c func()
+}
+
+func (a *readCloserAdapter) Read(p []byte) (int, error) { return a.r.Read(p) }
+func (a *readCloserAdapter) Close() error {
+	if a.c != nil {
+		a.c()
+		return nil
+	}
+	return nil
+}
+
 // Receive downloads from url to outputPath. If outputPath is empty, derive from headers or URL.
 // For text content (Content-Type: text/plain), outputs to stdout instead of saving to a file.
 // Supports resumable downloads via HTTP Range headers if the file already partially exists.
-func (d *Downloader) Receive(url string, outputPath string, force bool, progress io.Writer) (string, error) {
+func (d *Downloader) Receive(url string, outputPath string, force bool, progress io.Writer, key []byte) (string, error) {
 	// First, make a HEAD request or GET to determine filename and check for existing partial file
 	var startByte int64 = 0
 
@@ -51,6 +70,35 @@ func (d *Downloader) Receive(url string, outputPath string, force bool, progress
 		return "", fmt.Errorf("server returned error: HTTP %d\n\nTip: Check if the server is still running", resp.StatusCode)
 	}
 
+	// Handle Content-Encoding (zstd/gzip) before decryption
+	var bodyReader io.ReadCloser = resp.Body
+	enc := strings.ToLower(resp.Header.Get("Content-Encoding"))
+	if enc == "zstd" {
+		zr, err := zstd.NewReader(resp.Body)
+		if err != nil {
+			_ = resp.Body.Close()
+			return "", fmt.Errorf("failed to create zstd reader: %w", err)
+		}
+		// zstd.Decoder Close() signature doesn't match io.ReadCloser, adapt it
+		bodyReader = &readCloserAdapter{r: zr, c: zr.Close}
+	} else if enc == "gzip" {
+		gr, err := gzip.NewReader(resp.Body)
+		if err != nil {
+			_ = resp.Body.Close()
+			return "", fmt.Errorf("failed to create gzip reader: %w", err)
+		}
+		bodyReader = gr
+	}
+
+	if key != nil {
+		dr, err := crypto.NewDecryptReader(bodyReader, key)
+		if err != nil {
+			_ = bodyReader.Close()
+			return "", fmt.Errorf("failed to create decrypt reader: %w", err)
+		}
+		bodyReader = io.NopCloser(dr)
+	}
+
 	// Check if this is text content (text/plain without attachment disposition)
 	contentType := resp.Header.Get("Content-Type")
 	disposition := resp.Header.Get("Content-Disposition")
@@ -58,8 +106,8 @@ func (d *Downloader) Receive(url string, outputPath string, force bool, progress
 
 	if isTextContent {
 		// Output text to stdout
-		_, err := io.Copy(os.Stdout, resp.Body)
-		_ = resp.Body.Close()
+		_, err := io.Copy(os.Stdout, bodyReader)
+		_ = bodyReader.Close()
 		if err != nil {
 			return "", fmt.Errorf("failed to output text to stdout: %w", err)
 		}
@@ -126,13 +174,13 @@ func (d *Downloader) Receive(url string, outputPath string, force bool, progress
 		if err != nil {
 			return "", fmt.Errorf("failed to execute resume request: %w", err)
 		}
-		defer func() { _ = downloadResp.Body.Close() }()
 
 		if downloadResp.StatusCode != http.StatusPartialContent {
 			// Server doesn't support resume, start over
 			_ = f.Close()
 			f, err = os.Create(outputPath)
 			if err != nil {
+				_ = downloadResp.Body.Close()
 				return "", fmt.Errorf("failed to recreate file: %w", err)
 			}
 			defer func() { _ = f.Close() }()
@@ -142,23 +190,30 @@ func (d *Downloader) Receive(url string, outputPath string, force bool, progress
 			if err != nil {
 				return "", fmt.Errorf("failed to restart download: %w", err)
 			}
-			defer func() { _ = downloadResp.Body.Close() }()
 		}
 	} else {
 		downloadResp, err = d.client.Get(url)
 		if err != nil {
 			return "", fmt.Errorf("failed to start download: %w", err)
 		}
-		defer func() { _ = downloadResp.Body.Close() }()
 	}
+	defer func() { _ = downloadResp.Body.Close() }()
 
 	var src io.Reader = downloadResp.Body
+	if key != nil {
+		dr, err := crypto.NewDecryptReader(downloadResp.Body, key)
+		if err != nil {
+			return "", fmt.Errorf("failed to create decrypt reader: %w", err)
+		}
+		src = dr
+	}
+
 	var startTime time.Time
 	if progress != nil {
 		// Use the improved progress reader with ETA calculation
 		startTime = time.Now()
 		src = &ui.ProgressReader{
-			R:         downloadResp.Body,
+			R:         src,
 			Total:     totalSize,
 			Current:   startByte,
 			Out:       progress,
@@ -233,8 +288,8 @@ var defaultDownloader = NewDownloader(nil)
 
 // Receive downloads from url using the default HTTP client
 // This is a convenience function that wraps Downloader.Receive
-func Receive(url string, outputPath string, force bool, progress io.Writer) (string, error) {
-	return defaultDownloader.Receive(url, outputPath, force, progress)
+func Receive(url string, outputPath string, force bool, progress io.Writer, key []byte) (string, error) {
+	return defaultDownloader.Receive(url, outputPath, force, progress, key)
 }
 
 // filenameFromResponse extracts filename from Content-Disposition

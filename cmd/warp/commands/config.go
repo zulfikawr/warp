@@ -1,8 +1,11 @@
 package commands
 
 import (
+	"bufio"
 	"fmt"
 	"os"
+	"strconv"
+	"strings"
 	"syscall"
 
 	"github.com/zulfikawr/warp/cmd/warp/ui"
@@ -19,6 +22,9 @@ func Config(args []string) error {
 
 	subcmd := args[0]
 	switch subcmd {
+	case "init":
+		return configInit()
+
 	case "show":
 		cfg, err := config.LoadConfig()
 		if err != nil {
@@ -79,10 +85,156 @@ func Config(args []string) error {
 	return nil
 }
 
+func configInit() error {
+	configPath := config.GetConfigPath()
+
+	// Check if config already exists
+	if _, err := os.Stat(configPath); err == nil {
+		fmt.Printf(ui.C.Yellow+"Configuration file already exists at: %s\n"+ui.C.Reset, configPath)
+		overwrite := promptYesNo("Do you want to overwrite it?", false)
+		if !overwrite {
+			fmt.Println(ui.C.Dim + "Configuration initialization cancelled." + ui.C.Reset)
+			return nil
+		}
+	}
+
+	fmt.Println(ui.C.Bold + ui.C.Green + "Initialize Warp Configuration" + ui.C.Reset)
+	fmt.Println()
+	fmt.Println(ui.C.Cyan + "Press Enter to use default values shown in " + ui.C.Dim + "[brackets]" + ui.C.Reset)
+	fmt.Println()
+
+	cfg := config.DefaultConfig()
+	scanner := bufio.NewScanner(os.Stdin)
+
+	// Default Interface
+	cfg.DefaultInterface = promptString(scanner, ui.C.Cyan+"Network interface "+ui.C.Dim+"(leave empty for auto-detect)"+ui.C.Reset, cfg.DefaultInterface)
+
+	// Default Port
+	cfg.DefaultPort = promptInt(scanner, ui.C.Cyan+"Default port "+ui.C.Dim+"(0 for random)"+ui.C.Reset, cfg.DefaultPort)
+
+	// Buffer Size
+	bufferMB := cfg.BufferSize / (1024 * 1024)
+	bufferMB = promptInt(scanner, ui.C.Cyan+"Buffer size (MB)"+ui.C.Reset, bufferMB)
+	cfg.BufferSize = bufferMB * 1024 * 1024
+
+	// Max Upload Size
+	maxUploadGB := int(cfg.MaxUploadSize / (1024 * 1024 * 1024))
+	maxUploadGB = promptInt(scanner, ui.C.Cyan+"Max upload size (GB)"+ui.C.Reset, maxUploadGB)
+	cfg.MaxUploadSize = int64(maxUploadGB) * 1024 * 1024 * 1024
+
+	// Rate Limit
+	cfg.RateLimitMbps = promptFloat(scanner, ui.C.Cyan+"Rate limit "+ui.C.Dim+"(Mbps, 0 for no limit)"+ui.C.Reset, cfg.RateLimitMbps)
+
+	// Cache Size
+	cfg.CacheSizeMB = int64(promptInt(scanner, ui.C.Cyan+"Cache size (MB)"+ui.C.Reset, int(cfg.CacheSizeMB)))
+
+	// Chunk Size
+	cfg.ChunkSizeMB = promptInt(scanner, ui.C.Cyan+"Chunk size (MB)"+ui.C.Reset, cfg.ChunkSizeMB)
+
+	// Parallel Workers
+	cfg.ParallelWorkers = promptInt(scanner, ui.C.Cyan+"Number of parallel workers"+ui.C.Reset, cfg.ParallelWorkers)
+
+	// No QR
+	cfg.NoQR = promptYesNo(ui.C.Cyan+"Disable QR code display by default?"+ui.C.Reset, cfg.NoQR)
+
+	// No Checksum
+	cfg.NoChecksum = promptYesNo(ui.C.Cyan+"Disable SHA256 checksum verification by default?"+ui.C.Reset, cfg.NoChecksum)
+
+	// Upload Directory
+	cfg.UploadDir = promptString(scanner, ui.C.Cyan+"Default upload directory"+ui.C.Reset, cfg.UploadDir)
+
+	// Save configuration
+	if err := config.SaveConfig(cfg); err != nil {
+		return fmt.Errorf("failed to save configuration: %w", err)
+	}
+
+	fmt.Println()
+	fmt.Println(ui.C.Green + "✓ Configuration saved to: " + ui.C.Reset + ui.C.Dim + configPath + ui.C.Reset)
+	fmt.Println()
+	fmt.Println(ui.C.Dim + "You can edit the configuration anytime with:" + ui.C.Reset)
+	fmt.Println("  " + ui.C.Green + "warp config edit" + ui.C.Reset)
+
+	return nil
+}
+
+func promptString(scanner *bufio.Scanner, prompt string, defaultValue string) string {
+	if defaultValue != "" {
+		fmt.Printf("%s "+ui.C.Dim+"[%s]"+ui.C.Reset+": ", prompt, defaultValue)
+	} else {
+		fmt.Printf("%s: ", prompt)
+	}
+
+	scanner.Scan()
+	input := strings.TrimSpace(scanner.Text())
+
+	if input == "" {
+		return defaultValue
+	}
+	return input
+}
+
+func promptInt(scanner *bufio.Scanner, prompt string, defaultValue int) int {
+	fmt.Printf("%s "+ui.C.Dim+"[%d]"+ui.C.Reset+": ", prompt, defaultValue)
+
+	scanner.Scan()
+	input := strings.TrimSpace(scanner.Text())
+
+	if input == "" {
+		return defaultValue
+	}
+
+	value, err := strconv.Atoi(input)
+	if err != nil {
+		fmt.Printf(ui.C.Red+"Invalid number, using default: %d\n"+ui.C.Reset, defaultValue)
+		return defaultValue
+	}
+
+	return value
+}
+
+func promptFloat(scanner *bufio.Scanner, prompt string, defaultValue float64) float64 {
+	fmt.Printf("%s "+ui.C.Dim+"[%.1f]"+ui.C.Reset+": ", prompt, defaultValue)
+
+	scanner.Scan()
+	input := strings.TrimSpace(scanner.Text())
+
+	if input == "" {
+		return defaultValue
+	}
+
+	value, err := strconv.ParseFloat(input, 64)
+	if err != nil {
+		fmt.Printf(ui.C.Red+"Invalid number, using default: %.1f\n"+ui.C.Reset, defaultValue)
+		return defaultValue
+	}
+
+	return value
+}
+
+func promptYesNo(prompt string, defaultValue bool) bool {
+	defaultStr := ui.C.Dim + "y/N" + ui.C.Reset
+	if defaultValue {
+		defaultStr = ui.C.Dim + "Y/n" + ui.C.Reset
+	}
+
+	fmt.Printf("%s [%s]: ", prompt, defaultStr)
+
+	scanner := bufio.NewScanner(os.Stdin)
+	scanner.Scan()
+	input := strings.TrimSpace(strings.ToLower(scanner.Text()))
+
+	if input == "" {
+		return defaultValue
+	}
+
+	return input == "y" || input == "yes"
+}
+
 func configHelp() {
 	fmt.Println(ui.C.Bold + ui.C.Green + "warp config" + ui.C.Reset + " - Manage configuration file")
 	fmt.Println()
 	fmt.Println(ui.C.Bold + "Usage:" + ui.C.Reset)
+	fmt.Println("  " + ui.C.Green + "warp config init" + ui.C.Reset + "  Initialize configuration interactively")
 	fmt.Println("  " + ui.C.Green + "warp config show" + ui.C.Reset + "  Display current configuration")
 	fmt.Println("  " + ui.C.Green + "warp config edit" + ui.C.Reset + "  Open config file in $EDITOR")
 	fmt.Println("  " + ui.C.Green + "warp config path" + ui.C.Reset + "  Show config file path")
@@ -105,6 +257,7 @@ func configHelp() {
 	fmt.Println("  " + ui.C.Yellow + "upload_dir" + ui.C.Reset + "         Default upload directory")
 	fmt.Println()
 	fmt.Println(ui.C.Bold + "Examples:" + ui.C.Reset)
+	fmt.Println("  " + ui.C.Green + "warp config init" + ui.C.Reset + "              " + ui.C.Dim + "# Create config interactively" + ui.C.Reset)
 	fmt.Println("  " + ui.C.Green + "warp config show" + ui.C.Reset + "              " + ui.C.Dim + "# View current settings" + ui.C.Reset)
 	fmt.Println("  " + ui.C.Green + "warp config edit" + ui.C.Reset + "              " + ui.C.Dim + "# Edit configuration" + ui.C.Reset)
 	fmt.Println("  " + ui.C.Green + "warp config path" + ui.C.Reset + "              " + ui.C.Dim + "# Show config location" + ui.C.Reset)

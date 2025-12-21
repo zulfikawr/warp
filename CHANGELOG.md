@@ -5,7 +5,89 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.0.5] - 2025-01-20
+## [v1.1.0] - 2025-12-21
+
+### Added
+
+- **Encryption Now Default** - PAKE-based end-to-end encryption enabled by default for all transfers
+  - Automatic PAKE code generation with secure key exchange
+  - AES-256-GCM encryption applied to all files by default
+  - New `--no-encrypt` flag to disable encryption if needed (not recommended)
+  - Replaced `--encrypt` flag with `--no-encrypt` for clarity and security-first positioning
+  - Applies to both `warp send` and `warp host` commands
+  - Encryption includes automatic protection against nonce exhaustion
+  - Large encrypted files (>10MB) now properly skip zero-copy sendfile optimization to ensure encryption integrity
+
+- **QUIC/HTTP3 Protocol Support** - Dual-protocol server for optimized transfers
+  - Automatic QUIC/HTTP3 server running alongside TCP on the same port
+  - Eliminates TCP Head-of-Line blocking for parallel transfers
+  - 0-RTT connection establishment for reduced latency
+  - Self-signed certificates automatically generated for local network use
+  - Clients transparently use QUIC when available, fall back to TCP if needed
+  - Ideal for high-bandwidth local transfers and multi-file operations
+  - Built on industry-standard `quic-go` library
+  - No configuration needed - both protocols active by default
+
+- **Secure PAKE Transfers** - New human-readable code system
+  - Secure file transfer using short, human-readable codes (e.g., `7-apple-velocity`)
+  - Implements **SPAKE2** (Password-Authenticated Key Exchange) over Curve P-256
+  - **End-to-End Encryption** using AES-256-GCM derived from the PAKE shared secret
+  - Automatic mDNS discovery: `warp receive --code <code>` finds the sender on the local network
+  - Rate limiting (5 attempts per IP) to prevent brute-force attacks on codes
+  - 1024-word dictionary for generating memorable codes
+  - HMAC-SHA256 key confirmation for secure handshake verification
+  - Usage: `warp send <file>` (generates code) and `warp receive --code <code>`
+
+- **Zstandard (zstd) Compression** - Prefer `zstd` over `gzip` for compressible files
+  - Server now negotiates `Accept-Encoding: zstd` and will serve `Content-Encoding: zstd` when supported
+  - Client advertises `Accept-Encoding: zstd, gzip` and transparently decodes zstd responses
+  - Replaced prior `gzip`-only optimization to reduce CPU usage and improve throughput on high-speed LANs
+  - Files changed: `internal/server/download.go`, `internal/server/zip.go`, `internal/client/client.go`, `internal/client/receiver.go`
+
+- **Interactive Configuration Initialization** - New `warp config init` command
+  - Interactive wizard to create configuration file with guided prompts
+  - Color-coded interface with cyan prompts and dim default values in brackets
+  - Validates numeric inputs and provides helpful error messages
+  - Automatically converts between user-friendly units (MB, GB) and internal bytes
+  - Checks for existing config and prompts before overwriting
+  - Covers all configuration options: interface, port, buffer size, upload limits, rate limiting, cache, chunking, parallel workers, QR display, checksums, and upload directory
+  - Y/n or y/N prompts clearly indicate default choices for boolean options
+  - Success confirmation with config file path and reminder about `warp config edit`
+  - Usage: `warp config init`
+
+- **Network Speed Testing** - New `warp speedtest` command
+  - Test upload/download speeds and latency between machines
+  - Real HTTP-based testing using actual network requests
+  - Quality rating system (Excellent/Very Good/Good/Fair/Poor)
+  - Transfer time estimates for common file sizes (100MB, 1GB, 10GB)
+  - Server endpoints automatically available on all warp servers:
+    - `GET /speedtest/download` - Serves 10MB of random data for download testing
+    - `POST /speedtest/upload` - Accepts and discards data for upload testing
+  - Latency measurement via TCP round-trip time (5 samples averaged)
+  - Colored progress bars with brackets `[====================]`
+  - Smart fallback to raw throughput measurement if server lacks endpoints
+  - Configurable timeout with `--timeout` flag (default: 30s)
+  - Usage: `warp speedtest <host>[:port]`
+  - New package: `internal/speedtest/` with comprehensive unit tests
+  - New server handler: `internal/server/speedtest.go`
+  - Integrated into main help output and completion scripts
+
+### Fixed
+
+- **Large Encrypted File Transfers** - Fixed critical bug where files >10MB were transmitted as plaintext
+  - Issue: Sendfile optimization was incorrectly applied to encrypted transfers, bypassing EncryptReader
+  - Solution: Added `!isEncrypted` check to prevent sendfile for encrypted transfers
+  - Verified working for 10.5MB, 20MB, 50MB, and 100MB+ encrypted transfers with checksums
+  - All file sizes now properly encrypted end-to-end
+
+### Technical
+
+- Added `Cyan` color to `cmd/warp/ui/colors.go` for expanded color options
+- Server automatically registers speedtest endpoints on startup
+- Speedtest tests pass with 100% success rate (10 unit tests)
+- Integration tested with live warp server showing real network measurements
+
+## [1.0.5] - 2025-12-20
 
 ### Added
 
@@ -146,7 +228,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Prevents integer overflow, resource exhaustion, and path traversal attacks
   - Applied in both sequential and parallel upload handlers
 
-## [1.0.4] - 2025-01-19
+## [1.0.4] - 2025-12-19
 
 ### Added
 

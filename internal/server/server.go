@@ -2,12 +2,18 @@ package server
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"github.com/zulfikawr/warp/internal/logging"
 	"go.uber.org/zap"
+	"math/big"
 	"net"
 	"net/http"
 	"strings"
@@ -15,7 +21,9 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/quic-go/quic-go/http3"
 
+	"github.com/zulfikawr/warp/internal/crypto"
 	"github.com/zulfikawr/warp/internal/discovery"
 	"github.com/zulfikawr/warp/internal/network"
 	"github.com/zulfikawr/warp/internal/protocol"
@@ -33,6 +41,7 @@ type Server struct {
 	IP               net.IP // Server's IP address (exported for CLI display)
 	Port             int
 	httpServer       *http.Server
+	http3Server      *http3.Server
 	advertiser       *discovery.Advertiser
 	chunkTimes       sync.Map           // filename -> *chunkStat
 	uploadSessions   sync.Map           // sessionID -> *uploadSession
@@ -49,9 +58,24 @@ type Server struct {
 	// Encryption (exported for CLI configuration)
 	Password       string // If set, enables encryption
 	EncryptionSalt []byte // Salt for key derivation
+	// PAKE (Password-Authenticated Key Exchange)
+	PAKECode     string
+	pakeSessions sync.Map // sessionID -> *pakeSession
+	pakeAttempts sync.Map // clientIP -> int
+	tokenKeys    sync.Map // token -> []byte (shared key)
 	// Graceful shutdown support
 	shutdownCtx    context.Context
 	shutdownCancel context.CancelFunc
+	// Self-signed certificate for QUIC/HTTP3
+	tlsCert *tls.Certificate
+}
+
+type pakeSession struct {
+	State         *crypto.PAKEState
+	Key           []byte
+	ClientMessage []byte
+	ServerMessage []byte
+	Expiry        time.Time
 }
 
 // Start initializes and starts the HTTP server
@@ -71,6 +95,12 @@ func (s *Server) Start() (string, error) {
 	mux.HandleFunc("/ws/progress", s.handleProgressWebSocket)
 	// Encryption info endpoint (returns salt if encryption is enabled)
 	mux.HandleFunc("/d/encrypt-info", s.handleEncryptInfo)
+	// Speed test endpoints for network performance testing
+	mux.HandleFunc("/speedtest/download", s.handleSpeedTestDownload)
+	mux.HandleFunc("/speedtest/upload", s.handleSpeedTestUpload)
+	// PAKE endpoints
+	mux.HandleFunc(protocol.PAKEInitPath, s.handlePAKEInit)
+	mux.HandleFunc(protocol.PAKEVerifyPath, s.handlePAKEVerify)
 	if s.HostMode {
 		mux.HandleFunc(protocol.UploadPathPrefix, s.handleUpload)
 	} else {
@@ -116,9 +146,39 @@ func (s *Server) Start() (string, error) {
 	// Initialize shutdown context for graceful termination of background goroutines
 	s.shutdownCtx, s.shutdownCancel = context.WithCancel(context.Background())
 
+	// Start TCP server
 	go func() {
 		_ = s.httpServer.Serve(optimizedListener)
 	}()
+
+	// Set up QUIC/HTTP3 server on the same port
+	// HTTP/3 uses UDP, quic-go will handle the listener setup
+	quicAddr := fmt.Sprintf("%s:%d", ip.String(), s.Port)
+
+	// Create TLS config for QUIC
+	tlsConfig, err := s.getQuicTLSConfig()
+	if err != nil {
+		logging.Warn("Failed to create TLS config for QUIC", zap.Error(err))
+	} else {
+		// Set up HTTP/3 server
+		s.http3Server = &http3.Server{
+			Handler:   mux,
+			Addr:      quicAddr,
+			TLSConfig: tlsConfig,
+		}
+
+		// Start QUIC server in background
+		go func() {
+			if err := s.http3Server.ListenAndServe(); err != nil &&
+				err.Error() != "quic: Server closed" &&
+				err.Error() != "http3: Server closed" &&
+				err.Error() != "http: Server closed" {
+				logging.Warn("QUIC server error", zap.Error(err))
+			}
+		}()
+
+		logging.Info("QUIC/HTTP3 listener started successfully", zap.String("addr", quicAddr))
+	}
 
 	// Start session cleanup routine with proper shutdown support
 	go func() {
@@ -237,6 +297,13 @@ func (s *Server) Shutdown() error {
 		s.advertiser.Close()
 	}
 
+	// Close HTTP/3 server if it exists
+	if s.http3Server != nil {
+		if err := s.http3Server.Close(); err != nil {
+			logging.Warn("Error closing HTTP/3 server", zap.Error(err))
+		}
+	}
+
 	if s.httpServer == nil {
 		return nil
 	}
@@ -245,4 +312,68 @@ func (s *Server) Shutdown() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	return s.httpServer.Shutdown(ctx)
+}
+
+// generateSelfSignedCert creates a self-signed certificate for QUIC/HTTP3
+func (s *Server) generateSelfSignedCert() (*tls.Certificate, error) {
+	// Generate ECDSA private key (more efficient for QUIC)
+	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate private key: %w", err)
+	}
+
+	// Create certificate template
+	serialNumber, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate serial number: %w", err)
+	}
+
+	template := &x509.Certificate{
+		SerialNumber: serialNumber,
+		Subject: pkix.Name{
+			CommonName:         "warp-server",
+			Organization:       []string{"warp"},
+			OrganizationalUnit: []string{"local"},
+		},
+		NotBefore:   time.Now(),
+		NotAfter:    time.Now().Add(24 * time.Hour), // Valid for 24 hours
+		KeyUsage:    x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature,
+		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		DNSNames:    []string{s.IP.String(), "localhost", "127.0.0.1"},
+		IPAddresses: []net.IP{s.IP, net.ParseIP("127.0.0.1")},
+	}
+
+	// Self-sign the certificate
+	certBytes, err := x509.CreateCertificate(rand.Reader, template, template, &privateKey.PublicKey, privateKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create certificate: %w", err)
+	}
+
+	// Parse the certificate back
+	cert, err := x509.ParseCertificate(certBytes)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse certificate: %w", err)
+	}
+
+	return &tls.Certificate{
+		Certificate: [][]byte{cert.Raw},
+		PrivateKey:  privateKey,
+		Leaf:        cert,
+	}, nil
+}
+
+// getQuicTLSConfig returns TLS configuration for QUIC listener
+func (s *Server) getQuicTLSConfig() (*tls.Config, error) {
+	if s.tlsCert == nil {
+		cert, err := s.generateSelfSignedCert()
+		if err != nil {
+			return nil, fmt.Errorf("failed to generate certificate: %w", err)
+		}
+		s.tlsCert = cert
+	}
+
+	return &tls.Config{
+		Certificates: []tls.Certificate{*s.tlsCert},
+		ClientAuth:   tls.NoClientCert,
+	}, nil
 }
