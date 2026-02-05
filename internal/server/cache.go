@@ -6,11 +6,9 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
-	"strings"
-	"sync"
 	"time"
 
+	"github.com/zulfikawr/warp/internal/bufpool"
 	"github.com/zulfikawr/warp/internal/protocol"
 )
 
@@ -30,53 +28,6 @@ type checksumCacheEntry struct {
 	size     int64
 }
 
-// Buffer pools for different file sizes to reduce allocations
-var bufferPools = map[int]*sync.Pool{
-	protocol.BufferSizeSmall: {
-		New: func() interface{} {
-			b := make([]byte, protocol.BufferSizeSmall)
-			return &b
-		},
-	},
-	protocol.BufferSizeMedium: {
-		New: func() interface{} {
-			b := make([]byte, protocol.BufferSizeMedium)
-			return &b
-		},
-	},
-	protocol.BufferSizeLarge: {
-		New: func() interface{} {
-			b := make([]byte, protocol.BufferSizeLarge)
-			return &b
-		},
-	},
-	protocol.BufferSizeVeryLarge: {
-		New: func() interface{} {
-			b := make([]byte, protocol.BufferSizeVeryLarge)
-			return &b
-		},
-	},
-}
-
-// getBuffer retrieves a buffer of the specified size from the pool
-func getBuffer(size int) *[]byte {
-	pool, ok := bufferPools[size]
-	if !ok {
-		// Fallback to 1MB pool if size not found
-		pool = bufferPools[protocol.BufferSizeLarge]
-	}
-	return pool.Get().(*[]byte)
-}
-
-// putBuffer returns a buffer to the appropriate pool
-func putBuffer(buf *[]byte) {
-	size := len(*buf)
-	pool, ok := bufferPools[size]
-	if ok {
-		pool.Put(buf)
-	}
-}
-
 // computeFileChecksum calculates SHA256 hash of a file
 func computeFileChecksum(filePath string) (string, error) {
 	f, err := os.Open(filePath)
@@ -86,9 +37,8 @@ func computeFileChecksum(filePath string) (string, error) {
 	defer func() { _ = f.Close() }()
 
 	hash := sha256.New()
-	bufSize := 1048576 // 1MB buffer for checksum computation
-	buf := getBuffer(bufSize)
-	defer putBuffer(buf)
+	buf := bufpool.Get(protocol.BufferSizeLarge)
+	defer bufpool.Put(buf)
 
 	if _, err := io.CopyBuffer(hash, f, *buf); err != nil {
 		return "", fmt.Errorf("failed to compute checksum: %w", err)
@@ -127,19 +77,4 @@ func (s *Server) getCachedChecksum(path string) (string, error) {
 	})
 
 	return checksum, nil
-}
-
-// isCompressible checks if the file extension indicates compressible content
-func isCompressible(path string) bool {
-	ext := strings.ToLower(filepath.Ext(path))
-	compressible := []string{
-		".txt", ".html", ".htm", ".css", ".js", ".json", ".xml", ".svg",
-		".csv", ".log", ".md", ".yaml", ".yml", ".toml",
-	}
-	for _, c := range compressible {
-		if ext == c {
-			return true
-		}
-	}
-	return false
 }

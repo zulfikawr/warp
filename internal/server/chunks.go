@@ -11,6 +11,7 @@ import (
 
 	"github.com/zulfikawr/warp/internal/logging"
 	"github.com/zulfikawr/warp/internal/metrics"
+	"github.com/zulfikawr/warp/internal/progress"
 	"go.uber.org/zap"
 )
 
@@ -84,7 +85,7 @@ func (s *Server) handleParallelChunk(w http.ResponseWriter, r *http.Request, fil
 	}
 
 	// Get or create upload session
-	session, err := s.getOrCreateSession(sessionID, filename, totalSize, chunkTotal, dest)
+	session, err := s.SessionMgr.GetOrCreateSession(sessionID, filename, totalSize, chunkTotal, dest)
 	if err != nil {
 		logging.Error("Failed to create session", zap.String("session_id", sessionID[:8]), zap.String("filename", filename), zap.Error(err))
 		http.Error(w, "session error", http.StatusInternalServerError)
@@ -113,7 +114,49 @@ func (s *Server) handleParallelChunk(w http.ResponseWriter, r *http.Request, fil
 	metrics.ChunkUploadsTotal.WithLabelValues("success").Inc()
 
 	// Track cumulative chunk timing for this file
-	s.addChunkDuration(filename, time.Since(chunkStartTime))
+	s.SessionMgr.AddChunkDuration(filename, time.Since(chunkStartTime))
+
+	// Persist session checkpoint (every 5 chunks or on completion)
+	// Use non-blocking goroutine to avoid impacting upload performance
+	shouldPersist := len(session.ChunksWritten)%5 == 0 || session.isComplete()
+	if shouldPersist {
+		// Clone session data for async persistence
+		session.mu.Lock()
+		completedChunks := make([]int, 0, len(session.ChunksWritten))
+		for chunkID := range session.ChunksWritten {
+			completedChunks = append(completedChunks, chunkID)
+		}
+		sessionCopy := &uploadSession{
+			SessionID:     session.SessionID,
+			Filename:      session.Filename,
+			TotalSize:     session.TotalSize,
+			TotalChunks:   session.TotalChunks,
+			FilePath:      session.FilePath,
+			CreatedAt:     session.CreatedAt,
+			LastActivity:  session.LastActivity,
+			checkpoint:    session.checkpoint,
+			ChunksWritten: make(map[int]bool),
+		}
+		for _, id := range completedChunks {
+			sessionCopy.ChunksWritten[id] = true
+		}
+		session.mu.Unlock()
+
+		// Persist asynchronously
+		go func() {
+			persistStart := time.Now()
+			if err := s.SessionMgr.PersistUploadSession(sessionCopy, s.NoEncrypt); err != nil {
+				logging.Warn("Failed to persist upload session",
+					zap.String("session_id", sessionID[:8]),
+					zap.Error(err))
+				metrics.CheckpointSaveErrors.Inc()
+			} else {
+				persistDuration := time.Since(persistStart).Seconds()
+				metrics.CheckpointSaveDuration.Observe(persistDuration)
+				metrics.CheckpointSavesTotal.Inc()
+			}
+		}()
+	}
 
 	// Build response
 	w.Header().Set("Content-Type", "application/json")
@@ -140,15 +183,31 @@ func (s *Server) handleParallelChunk(w http.ResponseWriter, r *http.Request, fil
 		}
 		session.mu.Unlock()
 
+		// Delete checkpoint since transfer is complete
+		stateMgr := s.SessionMgr.GetStateManager()
+		if stateMgr != nil && session.checkpoint != nil {
+			if err := stateMgr.DeleteCheckpoint(sessionID); err != nil {
+				logging.Warn("Failed to delete completed checkpoint", zap.String("session_id", sessionID[:8]), zap.Error(err))
+			} else {
+				metrics.CheckpointCleanups.WithLabelValues("completed").Inc()
+				metrics.ActiveCheckpoints.Dec()
+			}
+		}
+
 		// Force final progress update to ensure it reaches 100%
-		if s.multiFileDisplay != nil {
-			s.printMultiFileProgress()
+		if s.ProgressChan != nil {
+			s.ProgressChan <- progress.Progress{
+				FileName:         filepath.Base(session.FilePath),
+				TransferredBytes: session.TotalSize,
+				TotalBytes:       session.TotalSize,
+				IsComplete:       true,
+			}
 		}
 
 		// Schedule cleanup after a delay
 		go func() {
 			time.Sleep(30 * time.Second)
-			s.cleanupSession(sessionID)
+			s.SessionMgr.CleanupSession(sessionID)
 		}()
 	}
 }
@@ -174,45 +233,42 @@ func (session *uploadSession) writeChunk(chunkID int, offset int64, data []byte)
 		session.LastActivity = time.Now()
 	}
 
-	// Update progress display even for duplicate chunks (important for retries)
-	if session.server != nil && session.server.multiFileDisplay != nil {
-		display := session.server.multiFileDisplay
-		display.mu.Lock()
-
-		if fileProgress, exists := display.files[session.SessionID]; exists {
-			isComplete := len(session.ChunksWritten) >= session.TotalChunks
-
-			var receivedBytes int64
-			if isComplete {
+	// Emit progress event
+	if session.server != nil && session.server.ProgressChan != nil {
+		isComplete := len(session.ChunksWritten) >= session.TotalChunks
+		var receivedBytes int64
+		if isComplete {
+			receivedBytes = session.TotalSize
+		} else {
+			chunkSize := session.TotalSize / int64(session.TotalChunks)
+			receivedBytes = int64(len(session.ChunksWritten)) * chunkSize
+			if receivedBytes > session.TotalSize {
 				receivedBytes = session.TotalSize
-			} else {
-				chunkSize := session.TotalSize / int64(session.TotalChunks)
-				receivedBytes = int64(len(session.ChunksWritten)) * chunkSize
-				if receivedBytes > session.TotalSize {
-					receivedBytes = session.TotalSize
-				}
-			}
-
-			oldReceived := fileProgress.received
-			fileProgress.received = receivedBytes
-			display.totalReceived += (receivedBytes - oldReceived)
-
-			if isComplete && !fileProgress.complete {
-				fileProgress.complete = true
-				fileProgress.received = session.TotalSize
-				fileProgress.endTime = time.Now()
-				session.complete = true
-			}
-
-			if time.Since(display.lastUpdate) > 100*time.Millisecond || fileProgress.complete {
-				display.lastUpdate = time.Now()
-				display.mu.Unlock()
-				session.server.printMultiFileProgress()
-				display.mu.Lock()
 			}
 		}
 
-		display.mu.Unlock()
+		// Calculate speed and ETA
+		elapsed := time.Since(session.StartTime).Seconds()
+		var speed float64
+		var eta time.Duration
+		if elapsed > 0 && receivedBytes > 0 {
+			speed = float64(receivedBytes) / elapsed // bytes per second
+			if speed > 0 && receivedBytes < session.TotalSize {
+				remaining := session.TotalSize - receivedBytes
+				etaSeconds := float64(remaining) / speed
+				eta = time.Duration(etaSeconds * float64(time.Second))
+			}
+		}
+
+		session.server.ProgressChan <- progress.Progress{
+			FileName:         filepath.Base(session.FilePath),
+			TransferredBytes: receivedBytes,
+			TotalBytes:       session.TotalSize,
+			IsComplete:       isComplete,
+			SpeedBytesPerSec: speed,
+			ETA:              eta,
+			StartTime:        session.StartTime,
+		}
 	}
 
 	session.mu.Unlock()

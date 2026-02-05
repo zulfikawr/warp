@@ -43,7 +43,7 @@ func Advertise(instance, mode, token, path string, ip net.IP, port int) (*Advert
 
 	srv, err := zeroconf.Register(instance, "_warp._tcp", "local.", port, txt, nil)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to register mDNS service: %w", err)
 	}
 
 	return &Advertiser{server: srv}, nil
@@ -61,7 +61,7 @@ func (a *Advertiser) Close() {
 func Browse(ctx context.Context, timeout time.Duration) ([]Service, error) {
 	resolver, err := zeroconf.NewResolver(nil)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to create mDNS resolver: %w", err)
 	}
 
 	entries := make(chan *zeroconf.ServiceEntry)
@@ -97,7 +97,7 @@ func Browse(ctx context.Context, timeout time.Duration) ([]Service, error) {
 	err = resolver.Browse(ctx, "_warp._tcp", "local.", entries)
 	if err != nil && !errors.Is(err, context.DeadlineExceeded) {
 		// Real error, not just timeout
-		return nil, err
+		return nil, fmt.Errorf("mDNS browse failed: %w", err)
 	}
 
 	// Wait for timeout/cancellation

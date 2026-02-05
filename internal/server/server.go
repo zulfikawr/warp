@@ -11,19 +11,24 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"github.com/zulfikawr/warp/internal/logging"
-	"go.uber.org/zap"
+	"io"
 	"math/big"
 	"net"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/zulfikawr/warp/internal/logging"
+	"github.com/zulfikawr/warp/internal/progress"
+	"github.com/zulfikawr/warp/internal/resume"
+	"go.uber.org/zap"
+
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/quic-go/quic-go/http3"
 
-	"github.com/zulfikawr/warp/internal/crypto"
 	"github.com/zulfikawr/warp/internal/discovery"
 	"github.com/zulfikawr/warp/internal/network"
 	"github.com/zulfikawr/warp/internal/protocol"
@@ -32,59 +37,100 @@ import (
 // Server represents the HTTP server for file transfer
 type Server struct {
 	InterfaceName string
-	Token         string
+	Code          string // PAKE Code (acts as session ID and password)
 	SrcPath       string
 	// Host mode (reverse drop)
-	HostMode         bool
-	UploadDir        string
-	TextContent      string // If set, serves text instead of file
-	IP               net.IP // Server's IP address (exported for CLI display)
-	Port             int
-	httpServer       *http.Server
-	http3Server      *http3.Server
-	advertiser       *discovery.Advertiser
-	chunkTimes       sync.Map           // filename -> *chunkStat
-	uploadSessions   sync.Map           // sessionID -> *uploadSession
-	multiFileDisplay *MultiFileProgress // Tracks multiple file downloads for unified display
-	// Progress tracking for WebSocket updates
-	activeUploads sync.Map // filename -> *ProgressTracker
+	HostMode  bool
+	UploadDir string
+
+	TextContent string // If set, serves text instead of file
+	IP          net.IP // Server's IP address (exported for CLI display)
+	Port        int
+
+	// Sub-managers
+	AuthMgr      *AuthManager
+	SessionMgr   *SessionManager
+	RateLimitMgr *RateLimitManager
+
+	httpServer  *http.Server
+	http3Server *http3.Server
+	advertiser  *discovery.Advertiser
+
 	// Rate limiting (exported for CLI configuration)
-	RateLimitMbps float64  // 0 = no limit
-	rateLimiters  sync.Map // clientIP -> *rateLimiterEntry
+	RateLimitMbps float64 // 0 = no limit
+
+	// Transfer configuration (exported for CLI configuration)
+	ChunkSize     int // size of chunks in bytes
+	MaxConcurrent int // maximum concurrent uploads
+
 	// Checksum caching for performance
 	checksumCache sync.Map // filepath -> *checksumCacheEntry
+
 	// File caching (exported for CLI configuration)
 	MaxCacheSize int64 // max cache size in bytes (default 100MB)
+
 	// Encryption (exported for CLI configuration)
 	Password       string // If set, enables encryption
 	EncryptionSalt []byte // Salt for key derivation
-	// PAKE (Password-Authenticated Key Exchange)
-	PAKECode     string
-	pakeSessions sync.Map // sessionID -> *pakeSession
-	pakeAttempts sync.Map // clientIP -> int
-	tokenKeys    sync.Map // token -> []byte (shared key)
+	NoEncrypt      bool   // If true, disables encryption
+
 	// Graceful shutdown support
 	shutdownCtx    context.Context
 	shutdownCancel context.CancelFunc
+
 	// Self-signed certificate for QUIC/HTTP3
 	tlsCert *tls.Certificate
-}
 
-type pakeSession struct {
-	State         *crypto.PAKEState
-	Key           []byte
-	ClientMessage []byte
-	ServerMessage []byte
-	Expiry        time.Time
+	// ProgressChan for TUI updates
+	ProgressChan chan progress.Progress
+
+	// Pause state - can be toggled by host TUI
+	IsPaused bool
+	pauseMu  sync.RWMutex
+
+	Protocols []string
 }
 
 // Start initializes and starts the HTTP server
-func (s *Server) Start() (string, error) {
+func (s *Server) Start(ctx context.Context) (string, error) {
+	// Set defaults for transfer configuration if not provided
+	if s.ChunkSize <= 0 {
+		s.ChunkSize = 2 * 1024 * 1024 // 2MB default
+	}
+	if s.MaxConcurrent <= 0 {
+		s.MaxConcurrent = 3 // default parallel workers
+	}
+
 	ip, err := network.DiscoverLANIP(s.InterfaceName)
 	if err != nil {
 		return "", fmt.Errorf("failed to discover LAN IP: %w", err)
 	}
 	s.IP = ip
+
+	// Initialize managers
+	s.AuthMgr = NewAuthManager(s.Code)
+	s.SessionMgr = NewSessionManager(s)
+	s.RateLimitMgr = NewRateLimitManager(s.RateLimitMbps)
+
+	// Initialize state manager for resume support (host mode only)
+	if s.HostMode {
+		homeDir, err := os.UserHomeDir()
+		if err != nil {
+			logging.Warn("Failed to get home directory for state manager", zap.Error(err))
+		} else {
+			stateDir := filepath.Join(homeDir, ".warp", "transfers")
+			stateManager, err := resume.NewTransferStateManager(stateDir)
+			if err != nil {
+				logging.Warn("Failed to initialize state manager", zap.Error(err))
+			} else {
+				s.SessionMgr.SetStateManager(stateManager)
+				// Load existing sessions from checkpoints
+				if err := s.SessionMgr.LoadUploadSessions(); err != nil {
+					logging.Warn("Failed to load upload sessions", zap.Error(err))
+				}
+			}
+		}
+	}
 
 	mux := http.NewServeMux()
 	// Health endpoint for realtime status checks
@@ -95,12 +141,21 @@ func (s *Server) Start() (string, error) {
 	mux.HandleFunc("/ws/progress", s.handleProgressWebSocket)
 	// Encryption info endpoint (returns salt if encryption is enabled)
 	mux.HandleFunc("/d/encrypt-info", s.handleEncryptInfo)
-	// Speed test endpoints for network performance testing
-	mux.HandleFunc("/speedtest/download", s.handleSpeedTestDownload)
-	mux.HandleFunc("/speedtest/upload", s.handleSpeedTestUpload)
+	// Pause state endpoint for clients to check
+	mux.HandleFunc("/pause-state", s.handlePauseState)
+	// Client IP endpoint for web UI
+	mux.HandleFunc("/client-ip", s.handleClientIP)
 	// PAKE endpoints
-	mux.HandleFunc(protocol.PAKEInitPath, s.handlePAKEInit)
-	mux.HandleFunc(protocol.PAKEVerifyPath, s.handlePAKEVerify)
+	mux.HandleFunc(protocol.PAKEInitPath, s.AuthMgr.HandleInit)
+	mux.HandleFunc(protocol.PAKEVerifyPath, s.AuthMgr.HandleVerify)
+	// Manifest endpoint for upload parameters
+	mux.HandleFunc("/manifest", s.handleManifest)
+	// Static files endpoint for CSS and JS
+	staticFS, err := GetStaticFS()
+	if err != nil {
+		return "", fmt.Errorf("failed to get static file system: %w", err)
+	}
+	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticFS))))
 	if s.HostMode {
 		mux.HandleFunc(protocol.UploadPathPrefix, s.handleUpload)
 	} else {
@@ -155,6 +210,8 @@ func (s *Server) Start() (string, error) {
 	// HTTP/3 uses UDP, quic-go will handle the listener setup
 	quicAddr := fmt.Sprintf("%s:%d", ip.String(), s.Port)
 
+	s.Protocols = []string{"HTTP/1.1"}
+
 	// Create TLS config for QUIC
 	tlsConfig, err := s.getQuicTLSConfig()
 	if err != nil {
@@ -167,13 +224,15 @@ func (s *Server) Start() (string, error) {
 			TLSConfig: tlsConfig,
 		}
 
+		s.Protocols = append(s.Protocols, "QUIC")
+
 		// Start QUIC server in background
 		go func() {
 			if err := s.http3Server.ListenAndServe(); err != nil &&
 				err.Error() != "quic: Server closed" &&
 				err.Error() != "http3: Server closed" &&
 				err.Error() != "http: Server closed" {
-				logging.Warn("QUIC server error", zap.Error(err))
+				logging.Debug("QUIC server error", zap.Error(err))
 			}
 		}()
 
@@ -188,7 +247,8 @@ func (s *Server) Start() (string, error) {
 		for {
 			select {
 			case <-ticker.C:
-				s.cleanupStaleSessions()
+				s.SessionMgr.CleanupStaleSessions()
+				s.SessionMgr.CleanupExpiredCheckpoints()
 			case <-s.shutdownCtx.Done():
 				logging.Info("Stopping session cleanup goroutine")
 				return
@@ -204,7 +264,7 @@ func (s *Server) Start() (string, error) {
 		for {
 			select {
 			case <-ticker.C:
-				s.cleanupRateLimiters()
+				s.RateLimitMgr.CleanupRateLimiters()
 			case <-s.shutdownCtx.Done():
 				logging.Info("Stopping rate limiter cleanup goroutine")
 				return
@@ -214,13 +274,14 @@ func (s *Server) Start() (string, error) {
 
 	// Advertise via mDNS for discovery (best-effort)
 	mode := "send"
-	path := protocol.PathPrefix + s.Token
+	path := protocol.PathPrefix + s.Code
 	if s.HostMode {
 		mode = "host"
-		path = protocol.UploadPathPrefix + s.Token
+		path = protocol.UploadPathPrefix + s.Code
 	}
-	instance := fmt.Sprintf("warp-%s", s.Token[:6])
-	adv, err := discovery.Advertise(instance, mode, s.Token, path, s.IP, s.Port)
+	instance := fmt.Sprintf("warp-%s", s.Code) // Use full code or substring? Using full code is safer/unique
+	// We might want to just use the number-word-word as is for friendliness
+	adv, err := discovery.Advertise(instance, mode, s.Code, path, s.IP, s.Port)
 	if err != nil {
 		logging.Warn("mDNS advertise failed", zap.Error(err))
 	} else {
@@ -228,9 +289,9 @@ func (s *Server) Start() (string, error) {
 	}
 
 	if s.HostMode {
-		return fmt.Sprintf("http://%s:%d%s%s", ip.String(), s.Port, protocol.UploadPathPrefix, s.Token), nil
+		return fmt.Sprintf("http://%s:%d%s%s", ip.String(), s.Port, protocol.UploadPathPrefix, s.Code), nil
 	}
-	return fmt.Sprintf("http://%s:%d%s%s", ip.String(), s.Port, protocol.PathPrefix, s.Token), nil
+	return fmt.Sprintf("http://%s:%d%s%s", ip.String(), s.Port, protocol.PathPrefix, s.Code), nil
 }
 
 // handleHealth returns a simple JSON payload indicating the server is alive
@@ -280,8 +341,8 @@ func (s *Server) handleManifest(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Pragma", "no-cache")
 	w.Header().Set("Expires", "0")
 	resp := map[string]interface{}{
-		"chunk_size":     2 * 1024 * 1024, // 2MB default chunk size
-		"max_concurrent": 3,               // parallel workers hint
+		"chunk_size":     s.ChunkSize,     // configurable chunk size
+		"max_concurrent": s.MaxConcurrent, // configurable parallel workers
 	}
 	_ = json.NewEncoder(w).Encode(resp)
 }
@@ -376,4 +437,66 @@ func (s *Server) getQuicTLSConfig() (*tls.Config, error) {
 		Certificates: []tls.Certificate{*s.tlsCert},
 		ClientAuth:   tls.NoClientCert,
 	}, nil
+}
+
+// SetPaused sets the pause state of the server
+func (s *Server) SetPaused(paused bool) {
+	s.pauseMu.Lock()
+	defer s.pauseMu.Unlock()
+	s.IsPaused = paused
+}
+
+// GetPaused returns the current pause state
+func (s *Server) GetPaused() bool {
+	s.pauseMu.RLock()
+	defer s.pauseMu.RUnlock()
+	return s.IsPaused
+}
+
+// handlePauseState returns the current pause state for clients to check
+func (s *Server) handlePauseState(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+	w.Header().Set("Pragma", "no-cache")
+	w.Header().Set("Expires", "0")
+
+	resp := map[string]interface{}{
+		"paused": s.GetPaused(),
+	}
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
+// handleClientIP returns the client's IP address
+func (s *Server) handleClientIP(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+	w.Header().Set("Pragma", "no-cache")
+	w.Header().Set("Expires", "0")
+
+	// Get client IP from request
+	clientIP := r.RemoteAddr
+	// Strip port if present
+	if host, _, err := net.SplitHostPort(clientIP); err == nil {
+		clientIP = host
+	}
+
+	resp := map[string]interface{}{
+		"ip": clientIP,
+	}
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
+// contextWriter wraps an io.Writer and checks a context before each write
+type contextWriter struct {
+	w   io.Writer
+	ctx context.Context
+}
+
+func (cw *contextWriter) Write(p []byte) (int, error) {
+	select {
+	case <-cw.ctx.Done():
+		return 0, cw.ctx.Err()
+	default:
+		return cw.w.Write(p)
+	}
 }

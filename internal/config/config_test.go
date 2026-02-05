@@ -31,14 +31,29 @@ func TestDefaultConfig(t *testing.T) {
 }
 
 func TestLoadConfig_NoFile(t *testing.T) {
+	// Create a temp directory with no config file
+	tmpDir := t.TempDir()
+
+	// Override home directory for this test
+	originalHome := os.Getenv("HOME")
+	originalUserProfile := os.Getenv("USERPROFILE") // Windows
+	_ = os.Setenv("HOME", tmpDir)
+	_ = os.Setenv("USERPROFILE", tmpDir) // Windows
+	defer func() {
+		_ = os.Setenv("HOME", originalHome)
+		_ = os.Setenv("USERPROFILE", originalUserProfile)
+	}()
+
 	// Load config when no file exists - should return defaults
 	cfg, err := LoadConfig()
 	if err != nil {
 		t.Fatalf("LoadConfig failed: %v", err)
 	}
 
-	if cfg.BufferSize != 1048576 {
-		t.Errorf("Expected default BufferSize, got %d", cfg.BufferSize)
+	// Should get default values
+	defaultCfg := DefaultConfig()
+	if cfg.BufferSize != defaultCfg.BufferSize {
+		t.Errorf("Expected default BufferSize %d, got %d", defaultCfg.BufferSize, cfg.BufferSize)
 	}
 }
 
@@ -48,22 +63,32 @@ func TestSaveAndLoadConfig(t *testing.T) {
 
 	// Override home directory for this test
 	originalHome := os.Getenv("HOME")
+	originalUserProfile := os.Getenv("USERPROFILE") // Windows
 	_ = os.Setenv("HOME", tmpDir)
-	defer func() { _ = os.Setenv("HOME", originalHome) }()
+	_ = os.Setenv("USERPROFILE", tmpDir) // Windows
+	defer func() {
+		_ = os.Setenv("HOME", originalHome)
+		_ = os.Setenv("USERPROFILE", originalUserProfile)
+	}()
 
 	// Create a custom config
 	cfg := &Config{
-		DefaultInterface: "eth0",
-		DefaultPort:      8080,
-		BufferSize:       2097152,
-		MaxUploadSize:    5368709120,
-		RateLimitMbps:    100,
-		CacheSizeMB:      200,
-		ChunkSizeMB:      4,
-		ParallelWorkers:  5,
-		NoQR:             true,
-		NoChecksum:       false,
-		UploadDir:        "/tmp/uploads",
+		DefaultInterface:      "eth0",
+		DefaultPort:           8080,
+		BufferSize:            2097152,
+		MaxUploadSize:         5368709120,
+		RateLimitMbps:         100,
+		CacheSizeMB:           200,
+		ChunkSizeMB:           4,
+		ParallelWorkers:       5,
+		NoQR:                  true,
+		NoChecksum:            false,
+		UploadDir:             tmpDir, // Use tmpDir instead of /tmp/uploads for cross-platform
+		EnableResume:          true,
+		AutoCheckpointSizeMB:  50,
+		CheckpointIntervalMB:  10,
+		CheckpointExpiryHours: 48,
+		Protocol:              DefaultConfig().Protocol, // Use default protocol config
 	}
 
 	// Create config directory
@@ -78,11 +103,18 @@ func TestSaveAndLoadConfig(t *testing.T) {
 	}
 
 	// Check if file was created
-	if _, err := os.Stat(filepath.Join(configDir, "warp.yaml")); os.IsNotExist(err) {
-		t.Fatal("Config file was not created")
+	configPath := filepath.Join(configDir, "warp.yaml")
+	if _, err := os.Stat(configPath); os.IsNotExist(err) {
+		// List directory contents for debugging
+		entries, _ := os.ReadDir(configDir)
+		t.Logf("Config directory contents:")
+		for _, e := range entries {
+			t.Logf("  - %s", e.Name())
+		}
+		t.Fatalf("Config file was not created at %s", configPath)
 	}
 
-	// Load config
+	// Load config - need to reset viper state
 	loadedCfg, err := LoadConfig()
 	if err != nil {
 		t.Fatalf("LoadConfig failed: %v", err)

@@ -10,7 +10,9 @@ type ColorScheme struct {
 	Green   string
 	Yellow  string
 	Red     string
+	Cyan    string
 	Magenta string
+	Black   string
 }
 
 // Colors is the global color scheme instance
@@ -25,9 +27,11 @@ func initColors() ColorScheme {
 		Reset:   "\033[0m",
 		Bold:    "\033[1m",
 		Dim:     "\033[2m",
-		Green:   "\033[32m",
+		Green:   "\033[38;2;130;200;130m",
 		Yellow:  "\033[33m",
 		Red:     "\033[31m",
+		Cyan:    "\033[36m",
 		Magenta: "\033[35m",
+		Black:   "\033[30m",
 	}
 }

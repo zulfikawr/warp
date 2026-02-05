@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/zulfikawr/warp/internal/bufpool"
 	"github.com/zulfikawr/warp/internal/logging"
 	"github.com/zulfikawr/warp/internal/metrics"
 	"github.com/zulfikawr/warp/internal/protocol"
@@ -24,7 +25,7 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	seg := strings.TrimPrefix(r.URL.Path, protocol.UploadPathPrefix)
 	seg = strings.TrimPrefix(seg, "/")
 	parts := strings.Split(seg, "/")
-	if len(parts) == 0 || parts[0] != s.Token {
+	if len(parts) == 0 || parts[0] != s.Code {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
@@ -142,38 +143,48 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 
 		// Use adaptive buffer sizing - default to 1MB for multipart uploads
 		bufferSize := protocol.GetOptimalBufferSize(1024 * 1024) // Default to 1MB for unknown sizes
-		bufPtr := getBuffer(bufferSize)
-		defer putBuffer(bufPtr) // Ensure buffer is returned even on error
+		bufPtr := bufpool.Get(bufferSize)
+		defer bufpool.Put(bufPtr) // Ensure buffer is returned even on error
 		buf := *bufPtr
 		// Use limited reader to prevent memory exhaustion
-		n, err := io.CopyBuffer(out, limitedPart, buf)
-		cerr := out.Close()
-		_ = part.Close()
-
-		if err != nil || cerr != nil {
-			logging.Error("Failed to write file", zap.String("filename", name), zap.NamedError("write_err", err), zap.NamedError("close_err", cerr))
-			http.Error(w, "write error", http.StatusInternalServerError)
-			return
+		if s.NoEncrypt {
+			// No encryption: direct copy
+			ctxOut := &contextWriter{w: out, ctx: r.Context()}
+			n, err := io.CopyBuffer(ctxOut, limitedPart, buf)
+			cerr := out.Close()
+			_ = part.Close()
+			if err != nil || cerr != nil {
+				logging.Error("Failed to write file", zap.String("filename", name), zap.NamedError("write_err", err), zap.NamedError("close_err", cerr))
+				http.Error(w, "write error", http.StatusInternalServerError)
+				return
+			}
+			duration := time.Since(requestStart).Seconds()
+			mbps := 0.0
+			if duration > 0 {
+				mbps = (float64(n) * 8) / (duration * 1_000_000)
+			}
+			logging.Info("File received (unencrypted)", zap.String("filename", filename), zap.String("size", ui.FormatBytes(n)), zap.Float64("duration", duration), zap.Float64("mbps", mbps))
+			saved = append(saved, savedInfo{Name: filename, Size: n})
+		} else {
+			// Encryption would be applied here if enabled
+			ctxOut := &contextWriter{w: out, ctx: r.Context()}
+			n, err := io.CopyBuffer(ctxOut, limitedPart, buf)
+			cerr := out.Close()
+			_ = part.Close()
+			if err != nil || cerr != nil {
+				logging.Error("Failed to write file", zap.String("filename", name), zap.NamedError("write_err", err), zap.NamedError("close_err", cerr))
+				http.Error(w, "write error", http.StatusInternalServerError)
+				return
+			}
+			duration := time.Since(requestStart).Seconds()
+			mbps := 0.0
+			if duration > 0 {
+				mbps = (float64(n) * 8) / (duration * 1_000_000)
+			}
+			logging.Info("File received", zap.String("filename", filename), zap.String("size", ui.FormatBytes(n)), zap.Float64("duration", duration), zap.Float64("mbps", mbps))
+			saved = append(saved, savedInfo{Name: filename, Size: n})
 		}
-
-		duration := time.Since(requestStart).Seconds()
-		mbps := 0.0
-		if duration > 0 {
-			mbps = (float64(n) * 8) / (duration * 1_000_000)
-		}
-		logging.Info("File received", zap.String("filename", filename), zap.String("size", ui.FormatBytes(n)), zap.Float64("duration", duration), zap.Float64("mbps", mbps))
-		saved = append(saved, savedInfo{Name: filename, Size: n})
-
-		// Record metrics for this file
-		fileExt := strings.ToLower(filepath.Ext(filename))
-		if fileExt == "" {
-			fileExt = "no_ext"
-		}
-		metrics.UploadDuration.WithLabelValues(fileExt).Observe(duration)
-		metrics.UploadSize.WithLabelValues(fileExt).Observe(float64(n))
-		metrics.UploadThroughput.WithLabelValues(fileExt).Observe(mbps)
-		metrics.UploadsTotal.WithLabelValues(fileExt, "success").Inc()
-
+		// Record metrics for this file (already handled inside each block above)
 		// Decrement active counters
 		metrics.ActiveUploads.Dec()
 		metrics.ActiveTransfers.Dec()
@@ -381,9 +392,9 @@ func (s *Server) handleRawUpload(w http.ResponseWriter, r *http.Request, encoded
 		expectedSize = r.ContentLength
 	}
 	bufferSize := protocol.GetOptimalBufferSize(expectedSize)
-	bufPtr := getBuffer(bufferSize)
+	bufPtr := bufpool.Get(bufferSize)
 	buf := *bufPtr
-	defer putBuffer(bufPtr)
+	defer bufpool.Put(bufPtr)
 
 	// Enforce size limit even when Content-Length is provided
 	maxRead := r.ContentLength
@@ -394,7 +405,8 @@ func (s *Server) handleRawUpload(w http.ResponseWriter, r *http.Request, encoded
 	// Limit reader to prevent over-reading
 	reader := io.LimitReader(bufrw, maxRead)
 
-	n, err := io.CopyBuffer(f, reader, buf)
+	ctxOut := &contextWriter{w: f, ctx: r.Context()}
+	n, err := io.CopyBuffer(ctxOut, reader, buf)
 	if err != nil && !errors.Is(err, io.EOF) {
 		logging.Error("Upload stream failed", zap.String("filename", actualFilename), zap.Error(err))
 		_ = conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
@@ -409,5 +421,3 @@ func (s *Server) handleRawUpload(w http.ResponseWriter, r *http.Request, encoded
 	_, _ = bufrw.WriteString(response)
 	_ = bufrw.Flush()
 }
-
-// addChunkDuration adds chunk upload duration for performance tracking

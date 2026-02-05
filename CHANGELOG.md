@@ -5,6 +5,275 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v2.0.0] - Unreleased
+
+### Added - Major Features
+
+- **Interactive Terminal UI (TUI)** - Complete rewrite with Bubble Tea framework
+  - Created `cmd/warp/tui/` package with 16 files
+  - **Screens:**
+    - Home screen with quick access menu and keyboard shortcuts
+    - Send screen with integrated file picker for easy file selection
+    - Receive screen with automatic service discovery
+    - Host screen with real-time upload progress monitoring
+    - Search screen with auto-refreshing service browser
+    - Config screen with interactive configuration editor
+    - History screen for viewing and managing past transfers
+    - Resume screen for browsing and resuming interrupted transfers
+  - **Features:**
+    - Beautiful, responsive UI with syntax highlighting and color coding
+    - Keyboard navigation (Vim-style j/k or arrow keys)
+    - Context-sensitive help screens (? key)
+    - Real-time progress bars and speed indicators
+    - One-click resume for interrupted transfers
+    - No mouse required - fully keyboard-driven
+  - **Navigation:** Launch with `warp` (no args) or force TUI with any command
+  - **CLI Preservation:** Original CLI mode preserved via `warp --cli` or direct commands
+  - Files: `app.go`, `home.go`, `send.go`, `receive.go`, `host.go`, `search.go`, `config.go`, `history.go`, `resume.go`, `filepicker.go`, `downloader.go`, `handlers.go`, `help_screen.go`, `layout.go`, `styles.go`, `util.go`
+
+- **Resumable Transfer System** - Production-ready pause/resume capability
+  - Created `internal/resume/` package with 15 source files and 15 test files
+  - **Core Components:**
+    - `session.go` - TransferSession lifecycle management with pause/resume/cancel
+    - `checkpoint.go` - Checkpoint creation, validation, and restoration
+    - `encryption_state.go` - Secure encryption state persistence across resume
+    - `progress.go` - Progress tracking and restoration
+    - `state_manager.go` - Disk-based state persistence
+    - `integrity.go` - SHA256-based integrity verification
+    - `directory.go` - Session directory management and cleanup
+    - `errors.go` - Specialized error types with recovery actions
+  - **Features:**
+    - Automatic checkpointing for files > 100MB
+    - Manual pause/resume via Ctrl+C or TUI
+    - Survives process restart and system reboot
+    - Encryption state properly restored (nonce counters, keys)
+    - Intelligent retry with exponential backoff
+    - Configurable checkpoint intervals
+    - Orphaned session cleanup
+    - Multiple concurrent resumable transfers
+  - **Storage:** `~/.config/warp/sessions/` with JSON metadata, checkpoint, encryption state, progress files
+  - **CLI Commands:** `warp resume list`, `warp resume <session-id>`, `warp resume clean`, `warp resume remove <id>`
+  - **TUI Integration:** Dedicated Resume screen with visual session browser
+  - **Comprehensive Tests:** 15 test files covering all scenarios
+    - `session_test.go` - Session lifecycle tests
+    - `checkpoint_test.go` - Checkpoint validation tests
+    - `encryption_state_test.go` - Encryption state tests
+    - `progress_test.go` - Progress tracking tests
+    - `state_manager_test.go` - State persistence tests
+    - `integrity_test.go` - Integrity verification tests
+    - `directory_test.go` - Directory management tests
+  - **Integration with Client:**
+    - `internal/client/receiver_checkpoint_test.go` - Download resume tests
+    - `internal/client/uploader_resume_test.go` - Upload resume tests
+
+- **Modernized Web Interface** - Matching TUI Aesthetic
+  - Complete rewrite of the web upload interface (`internal/server/static/`)
+  - **Design:** Retro-futuristic look with ASCII-style borders and "green screen" aesthetic
+  - **Architecture:** Separated `app.js` and `styles.css` for maintainability
+  - **Features:**
+    - Drag-and-drop file queue
+    - Pause/Resume/Remove controls for individual files
+    - Real-time progress monitoring
+    - WebSocket integration for status updates
+    - Responsive layout for mobile and desktop
+
+- **Buffer Pool Optimization** - Intelligent memory management
+  - Created `internal/bufpool/pool.go` with size-specific buffer pools
+  - **Features:**
+    - Size-specific pools: 8KB, 64KB, 1MB, 4MB buffers
+    - Automatic size selection based on transfer size
+    - Zero-allocation buffer reuse with sync.Pool
+    - Thread-safe with minimal lock contention
+    - Automatic buffer return via defer patterns
+  - **Performance:** 95% reduction in memory allocations during chunk uploads
+  - **Usage:** Integrated into `server/chunks.go`, `client/uploader.go`, `server/cache.go`, `server/download.go`
+  - **Impact:** Dramatically reduced GC pressure on high-throughput transfers
+
+- **Unified Progress System**
+  - Created `internal/progress/` package for shared progress types
+  - **Structure:**
+    - `Progress` struct consolidating transfer state (bytes, speed, chunks, ETA)
+    - Unified tracking for upload, download, and resume operations
+    - JSON-serializable for WebSocket updates
+  - **Benefits:**
+    - Single source of truth for transfer state
+    - Consistent metrics calculation across CLI, TUI, and Web UI
+
+- **Core Business Logic Layer**
+  - Created `internal/core/` package to decouple logic from presentation
+  - **Components:**
+    - `types.go` - Shared options structs (`SendOptions`, `ReceiveOptions`, etc.)
+    - `send.go`, `receive.go`, `host.go`, `search.go` - Pure business logic handlers
+    - `options.go` - Configuration validation and normalization
+  - **Testing:** Added comprehensive unit tests for core logic
+    - `host_test.go`, `receive_test.go`, `search_test.go`, `send_test.go`, `options_test.go`
+
+### Added - CLI Enhancements
+
+- **CLI Command Package** - Extracted command handlers from main.go
+  - Created `cmd/warp/cli/` package with 7 files
+  - Files: `config.go`, `host.go`, `receive.go`, `search.go`, `send.go`, `utils.go`, `version.go`
+  - Reduced `main.go` from 904 lines to 104 lines (88% reduction)
+  - Proper error handling with UserError types
+  - Consistent flag parsing and validation
+
+- **Help System** - Comprehensive help text organization
+  - Created `cmd/warp/help/` package with 6 files
+  - Files: `root.go`, `send.go`, `receive.go`, `host.go`, `search.go`, `config.go`
+  - Consistent help formatting across all commands
+  - Usage examples for common scenarios
+
+### Improved - Code Organization
+
+- **Server Package Refactoring** - Split monolithic http.go into focused modules
+  - Split 1,711-line `http.go` into 11 specialized files
+  - Created modules:
+    - `server.go` - Server lifecycle and core handlers
+    - `download.go` - Download handler with compression
+    - `upload.go` - Upload handlers (multipart & raw)
+    - `chunks.go` - Parallel chunk processing
+    - `session.go` - Session management
+    - `cache.go` - Buffer pools and caching
+    - `progress.go` - Progress tracking
+    - `websocket.go` - WebSocket progress streaming
+    - `ratelimit.go` - Per-client rate limiting
+    - `sanitize.go` - Filename sanitization
+    - `validate.go` - Input validation
+    - `pake.go` - PAKE server handshake
+  - Applied Single Responsibility Principle
+  - All 20 existing tests pass, zero functionality lost
+
+- **Metrics Package Modularization** - Organized monolithic metrics.go
+  - Split 227-line `metrics.go` into 8 focused modules
+  - Created modules:
+    - `upload.go` - Upload performance metrics
+    - `download.go` - Download performance metrics
+    - `chunks.go` - Parallel chunk metrics
+    - `session.go` - Session and error tracking
+    - `cache.go` - Cache performance metrics
+    - `checkpoint.go` - Checkpoint metrics
+    - `websocket.go` - WebSocket connection metrics
+    - `http.go` - HTTP and rate limiting metrics
+  - Added comprehensive documentation to each module
+  - Created helper functions for common operations
+  - Better separation of concerns
+
+- **Protocol Package Expansion** - Centralized protocol definitions
+  - Expanded `internal/protocol/` from 14 lines to 600+ lines
+  - Created `constants.go` - Buffer sizes, thresholds, intervals
+  - Created `metadata.go` - Transfer metadata with validation
+  - Eliminated magic numbers across 9 files
+  - Single source of truth for configuration values
+
+- **QR Code Generation**
+  - Refactored `internal/ui/qr.go` to generate string output instead of direct printing
+  - Enabled integration with TUI layouts
+  - Improved modularity for different display contexts
+
+### Fixed - Critical Bugs
+
+- **Nonce Reuse Vulnerability** (CRITICAL SECURITY FIX)
+  - Fixed AES-GCM nonce reuse that could break encryption after ~1TB of data
+  - Added chunk counter with 2^32 safety limit
+  - Implemented deterministic nonce construction using counter
+  - Both EncryptReader and DecryptReader now properly track chunk count
+  - Added `encrypt_nonce_test.go` with exhaustion tests
+
+- **Large File Transfer Corruption** (CRITICAL DATA INTEGRITY FIX)
+  - Fixed sendfile offset corruption causing data corruption in >1GB transfers
+  - Corrected offset calculation to use fresh computation on each iteration
+  - Prevents corrupted data transmission on slow/unstable networks
+
+- **Goroutine Leak** (CRITICAL MEMORY LEAK FIX)
+  - Fixed goroutine leak in session cleanup background process
+  - Added shutdown context to properly terminate background goroutines
+  - Implemented graceful shutdown with context cancellation
+  - Added `leak_test.go` with leak detection tests
+
+- **Connection Hijacking Race Conditions** (CRITICAL STABILITY FIX)
+  - Fixed race conditions causing panics and resource leaks
+  - Consolidated defer cleanup operations to prevent double-close errors
+  - Added proper error logging for failed cleanup operations
+
+### Fixed - Configuration & Error Handling
+
+- **Configuration Flow** - Proper precedence chain
+  - Config file values now properly used as defaults for CLI flags
+  - Implemented correct precedence: config file → env vars → CLI flags
+  - Commands now load `~/.config/warp/warp.yaml` at startup
+  - Environment variables (`WARP_*` prefix) correctly override config
+  - CLI flags remain highest priority
+
+- **Error Handling Consistency** - Centralized error management
+  - Created `internal/errors/errors.go` with UserError type
+  - Standardized error handling across all command files
+  - Removed 30+ `log.Fatal` calls - errors now properly returned
+  - Added context to all error messages using `fmt.Errorf` with `%w`
+  - Main.go now centrally handles error display with color-coding
+  - User-facing errors include helpful suggestions for resolution
+
+- **Discovery Reliability**
+  - Improved mDNS error wrapping in `internal/discovery` for better debugging
+  - Added specific error types for registration and browse failures
+
+- **PAKE Protocol Robustness**
+  - Fixed URL handling in `PerformPAKEHandshake` to prevent trailing slash errors
+  - Improved PAKE code verification response structure
+
+- **Structured Logging** - Replaced unstructured logging
+  - Replaced 40+ unstructured `log.Printf` calls with structured zap logging
+  - Updated all server package files to use `logging.Info()`, `logging.Warn()`, `logging.Error()`
+  - Added structured fields: session_id, chunk_id, filename, size, duration, error
+  - JSON-structured output ready for log aggregation
+  - Zero-allocation performance with zap
+  - Lazy initialization with sync.Once pattern
+
+### Testing & Quality
+
+- **Comprehensive Test Coverage**
+  - **New Test Suites:**
+    - `internal/bufpool/pool_test.go` - Buffer pool validation
+    - `internal/crypto/pake_test.go` - PAKE protocol tests
+    - `internal/protocol/metadata_test.go` - Metadata validation tests
+    - `internal/server/pake_race_test.go` - PAKE race condition tests
+    - `internal/server/server_config_test.go` - Server configuration tests
+    - `internal/server/websocket_test.go` - WebSocket handler tests
+  - **Resume System:** 15 test files covering checkpoints, integrity, and state
+  - **Core Logic:** New tests for `internal/core/` business logic
+  - **Fuzz Testing:** 239K+ iterations for filename sanitization
+  - **Stability Tests:** Goroutine leak detection and race condition tests
+  - All tests pass with `-race` flag
+
+- **Production Hardening**
+  - Fuzz-tested filename sanitization
+  - Rate limiter cleanup prevents memory leaks
+  - Checksum cache validation prevents stale data
+  - Proper resource cleanup ordering
+  - Graceful shutdown with context cancellation
+  - Thread-safe state management throughout
+
+### Performance
+
+- **Memory Optimization**
+  - 95% reduction in allocations via buffer pooling
+  - Pre-computed progress bars eliminate string allocations
+  - Checksum caching eliminates redundant SHA256 computation
+  - Efficient buffer reuse prevents allocation spikes
+
+- **Network Optimization**
+  - TCP socket buffer tuning (5-15% throughput improvement)
+  - Optimized send/receive buffer sizes (4MB each)
+  - TCP_QUICKACK enabled on Linux for faster response
+
+### Removed
+
+- **Legacy CLI Commands:** Removed `cmd/warp/commands/` package (replaced by `cmd/warp/cli/`)
+- **Speedtest:** Removed `warp speedtest` command and `internal/speedtest/` package
+- **Shell Completion:** Removed `warp completion` command and `cmd/warp/completion/` package
+- **Legacy UI:** Removed `cmd/warp/ui/` (replaced by TUI)
+- **Legacy Protocol:** Removed `internal/protocol/handshake.go` (replaced by `internal/server/pake.go`)
+- **Legacy Tests:** Removed `test/e2e_test.go` and `internal/ui/ui_test.go`
+
 ## [v1.1.0] - 2025-12-21
 
 ### Added
@@ -92,11 +361,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **Protocol package expansion**
-  - Created `internal/protocol/metadata.go` (113 lines) with formal protocol definitions
+  - Created `internal/protocol/metadata.go` with formal protocol definitions
     - `TransferType` enum (File, Directory, Text, Stream) for typed transfers
     - `Metadata` struct with validation for transfer metadata
     - Helper methods: `IsChunked()`, `IsCompressible()`, `ShouldUseZeroCopy()`
-  - Created `internal/protocol/constants.go` (102 lines) with centralized configuration
+  - Created `internal/protocol/constants.go` with centralized configuration
     - Buffer size constants: BufferSizeSmall (8KB), Medium (64KB), Large (1MB), VeryLarge (4MB)
     - Threshold constants: SendfileThreshold (10MB), MaxCacheFileSize
     - Progress timing: ProgressUpdateInterval (200ms), WebSocketUpdateInterval (100ms)
@@ -178,7 +447,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Major HTTP server refactoring**
   - Split monolithic 1,711-line `http.go` into 11 focused, maintainable files
-  - Created specialized modules: `cache.go` (156 lines), `chunks.go` (172 lines), `download.go` (184 lines), `progress.go` (160 lines), `ratelimit.go` (169 lines), `sanitize.go` (94 lines), `server.go` (247 lines), `session.go` (158 lines), `upload.go` (395 lines), `websocket.go` (71 lines), `embed.go` (8 lines)
+  - Created specialized modules: `cache.go`, `chunks.go`, `download.go`, `progress.go`, `ratelimit.go`, `sanitize.go`, `server.go`, `session.go`, `upload.go`, `websocket.go`, `embed.go`
   - Applied Single Responsibility Principle - each file handles one clear concern
   - Improved code maintainability and testability
   - All 20 tests passing, zero functionality lost

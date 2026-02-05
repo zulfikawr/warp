@@ -3,10 +3,40 @@ package server
 import (
 	"encoding/json"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/zulfikawr/warp/internal/crypto"
 )
+
+// AuthManager handles PAKE-based authentication and shared key management
+type AuthManager struct {
+	Code         string
+	pakeSessions sync.Map // sessionID -> *pakeSession
+	pakeAttempts sync.Map // clientIP -> *clientState
+	tokenKeys    sync.Map // code -> []byte (shared key)
+}
+
+// clientState holds the state for a client IP with atomic access
+type clientState struct {
+	mu       sync.Mutex
+	attempts int
+}
+
+// NewAuthManager creates a new AuthManager with the given PAKE code
+func NewAuthManager(code string) *AuthManager {
+	return &AuthManager{
+		Code: code,
+	}
+}
+
+type pakeSession struct {
+	State         *crypto.PAKEState
+	Key           []byte
+	ClientMessage []byte
+	ServerMessage []byte
+	Expiry        time.Time
+}
 
 type pakeInitRequest struct {
 	Message []byte `json:"message"`
@@ -22,21 +52,27 @@ type pakeVerifyRequest struct {
 
 type pakeVerifyResponse struct {
 	Confirmation []byte `json:"confirmation"`
-	Token        string `json:"token,omitempty"`
+	Code         string `json:"code,omitempty"`
 }
 
-func (s *Server) handlePAKEInit(w http.ResponseWriter, r *http.Request) {
+// HandleInit handles the initial PAKE message from the client
+func (m *AuthManager) HandleInit(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
 	clientIP := getClientIP(r)
-	attempts, _ := s.pakeAttempts.LoadOrStore(clientIP, 0)
-	if attempts.(int) >= 5 {
+	val, _ := m.pakeAttempts.LoadOrStore(clientIP, &clientState{})
+	state := val.(*clientState)
+
+	state.mu.Lock()
+	if state.attempts >= 5 {
+		state.mu.Unlock()
 		http.Error(w, "Too many attempts", http.StatusTooManyRequests)
 		return
 	}
+	state.mu.Unlock()
 
 	var req pakeInitRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -44,7 +80,7 @@ func (s *Server) handlePAKEInit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	state, err := crypto.InitializePAKE(s.PAKECode, true)
+	pakeState, err := crypto.InitializePAKE(m.Code, true)
 	if err != nil {
 		http.Error(w, "Failed to initialize PAKE", http.StatusInternalServerError)
 		return
@@ -52,18 +88,18 @@ func (s *Server) handlePAKEInit(w http.ResponseWriter, r *http.Request) {
 
 	// Server (Role 1) updates with Client's message (X)
 	// This computes Y and the shared key
-	key, err := state.ComputeSharedKey(req.Message)
+	key, err := pakeState.ComputeSharedKey(req.Message)
 	if err != nil {
 		http.Error(w, "Failed to compute shared key", http.StatusBadRequest)
 		return
 	}
 
-	serverMessage := state.Bytes()
+	serverMessage := pakeState.Bytes()
 
 	// Store session
 	sessionID := r.RemoteAddr
-	s.pakeSessions.Store(sessionID, &pakeSession{
-		State:         state,
+	m.pakeSessions.Store(sessionID, &pakeSession{
+		State:         pakeState,
 		Key:           key,
 		ClientMessage: req.Message,
 		ServerMessage: serverMessage,
@@ -74,17 +110,18 @@ func (s *Server) handlePAKEInit(w http.ResponseWriter, r *http.Request) {
 		Message: serverMessage,
 	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	_ = json.NewEncoder(w).Encode(resp)
 }
 
-func (s *Server) handlePAKEVerify(w http.ResponseWriter, r *http.Request) {
+// HandleVerify handles the second PAKE message from the client
+func (m *AuthManager) HandleVerify(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
 	sessionID := r.RemoteAddr
-	val, ok := s.pakeSessions.Load(sessionID)
+	val, ok := m.pakeSessions.Load(sessionID)
 	if !ok {
 		http.Error(w, "Session not found", http.StatusNotFound)
 		return
@@ -92,7 +129,7 @@ func (s *Server) handlePAKEVerify(w http.ResponseWriter, r *http.Request) {
 	session := val.(*pakeSession)
 
 	if time.Now().After(session.Expiry) {
-		s.pakeSessions.Delete(sessionID)
+		m.pakeSessions.Delete(sessionID)
 		http.Error(w, "Session expired", http.StatusGone)
 		return
 	}
@@ -105,11 +142,16 @@ func (s *Server) handlePAKEVerify(w http.ResponseWriter, r *http.Request) {
 
 	// Verify client's confirmation: HMAC(key, ServerMessage)
 	if err := crypto.VerifyConfirmation(session.Key, session.ServerMessage, req.Confirmation); err != nil {
-		s.pakeSessions.Delete(sessionID)
+		m.pakeSessions.Delete(sessionID)
 		clientIP := getClientIP(r)
-		if val, ok := s.pakeAttempts.Load(clientIP); ok {
-			s.pakeAttempts.Store(clientIP, val.(int)+1)
+
+		if val, ok := m.pakeAttempts.Load(clientIP); ok {
+			state := val.(*clientState)
+			state.mu.Lock()
+			state.attempts++
+			state.mu.Unlock()
 		}
+
 		http.Error(w, "Invalid confirmation", http.StatusUnauthorized)
 		return
 	}
@@ -117,13 +159,22 @@ func (s *Server) handlePAKEVerify(w http.ResponseWriter, r *http.Request) {
 	// Generate server's confirmation: HMAC(key, ClientMessage)
 	serverConfirmation := crypto.GenerateConfirmation(session.Key, session.ClientMessage)
 
-	// Store the key for the token
-	s.tokenKeys.Store(s.Token, session.Key)
+	// Store the key for the session
+	m.tokenKeys.Store(m.Code, session.Key)
 
 	resp := pakeVerifyResponse{
 		Confirmation: serverConfirmation,
-		Token:        s.Token,
+		Code:         m.Code,
 	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
+// GetKey returns the shared key for a given code
+func (m *AuthManager) GetKey(code string) ([]byte, bool) {
+	val, ok := m.tokenKeys.Load(code)
+	if !ok {
+		return nil, false
+	}
+	return val.([]byte), true
 }

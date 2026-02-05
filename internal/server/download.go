@@ -3,9 +3,6 @@ package server
 import (
 	"compress/gzip"
 	"fmt"
-	"github.com/klauspost/compress/zstd"
-	"github.com/zulfikawr/warp/internal/logging"
-	"go.uber.org/zap"
 	"io"
 	"net/http"
 	"os"
@@ -13,6 +10,10 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/klauspost/compress/zstd"
+	"github.com/zulfikawr/warp/internal/logging"
+	"go.uber.org/zap"
 
 	"github.com/zulfikawr/warp/internal/crypto"
 	"github.com/zulfikawr/warp/internal/metrics"
@@ -30,9 +31,9 @@ func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
 		metrics.ActiveTransfers.Dec()
 	}()
 
-	// Expect /d/{token}
+	// Expect /d/{code}
 	p := strings.TrimPrefix(r.URL.Path, protocol.PathPrefix)
-	if p != s.Token {
+	if p != s.Code {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
@@ -98,7 +99,7 @@ func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
 	acceptsZstd := strings.Contains(encHeader, "zstd")
 	acceptsGzip := strings.Contains(encHeader, "gzip")
 	// Prefer zstd when available
-	shouldCompress := (acceptsZstd || acceptsGzip) && isCompressible(s.SrcPath) && fi.Size() > 1024 // Only compress files > 1KB
+	shouldCompress := (acceptsZstd || acceptsGzip) && protocol.IsCompressible(s.SrcPath) && fi.Size() > 1024 // Only compress files > 1KB
 
 	// Support resumable downloads via Range headers
 	f, err := os.Open(s.SrcPath)
@@ -111,9 +112,8 @@ func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
 	// Check if we have a shared key for this token
 	var reader io.Reader = f
 	var isEncrypted bool
-	if val, ok := s.tokenKeys.Load(s.Token); ok {
-		key := val.([]byte)
-		logging.Info("Found key for token in tokenKeys", zap.String("token", s.Token), zap.Int("keyLen", len(key)))
+	if key, ok := s.AuthMgr.GetKey(s.Code); ok {
+		logging.Info("Found key for code in tokenKeys", zap.String("code", s.Code), zap.Int("keyLen", len(key)))
 		encReader, err := crypto.NewEncryptReader(f, key)
 		if err != nil {
 			logging.Error("Failed to create encrypt reader", zap.Error(err))
@@ -125,15 +125,15 @@ func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
 		// Range requests and compression don't work with our chunked encryption
 		shouldCompress = false
 	} else {
-		logging.Info("No key found for token", zap.String("token", s.Token))
+		logging.Info("No key found for code", zap.String("code", s.Code))
 	}
 
 	// Apply rate limiting if configured
 	clientIP := getClientIP(r)
 	var writer io.Writer = w
-	if limiter := s.getRateLimiter(clientIP); limiter != nil {
+	if limiter := s.RateLimitMgr.GetRateLimiter(clientIP); limiter != nil {
 		writer = &RateLimitedWriter{w: w, limiter: limiter}
-		metrics.RateLimitedRequests.WithLabelValues(clientIP).Inc()
+		metrics.RecordBandwidthRateLimit()
 	}
 
 	rangeHeader := r.Header.Get("Range")
@@ -147,7 +147,11 @@ func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, fi.Size()-1, fi.Size()))
 				w.Header().Set("Content-Length", fmt.Sprintf("%d", fi.Size()-start))
 				w.WriteHeader(http.StatusPartialContent)
-				_, _ = io.Copy(writer, f)
+
+				// Wrap writer to respect context
+				ctxWriter := &contextWriter{w: writer, ctx: r.Context()}
+				_, _ = io.Copy(ctxWriter, f)
+
 				logging.Info("Resumed download", zap.Int64("start", start), zap.String("filename", filepath.Base(s.SrcPath)))
 				return
 			}
@@ -200,9 +204,9 @@ func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Use zero-copy sendfile for large binary files on Linux (>10MB and not compressible)
+	// Use zero-copy sendfile for large binary files on Linux (>1MB and not compressible)
 	// BUT: Skip sendfile for encrypted transfers since we need to stream through EncryptReader
-	if runtime.GOOS == "linux" && fi.Size() > 10*1024*1024 && !isCompressible(s.SrcPath) && !isEncrypted {
+	if runtime.GOOS == "linux" && fi.Size() > 1*1024*1024 && !protocol.IsCompressible(s.SrcPath) && !isEncrypted {
 		// Compute checksum before sending (with caching)
 		checksum, err := s.getCachedChecksum(s.SrcPath)
 		if err == nil {
@@ -233,8 +237,7 @@ func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
 		defer func() { _ = f.Close() }()
 		// After reopening, recreate encrypted reader if needed
 		if isEncrypted {
-			if val, ok := s.tokenKeys.Load(s.Token); ok {
-				key := val.([]byte)
+			if key, ok := s.AuthMgr.GetKey(s.Code); ok {
 				encReader, err := crypto.NewEncryptReader(f, key)
 				if err == nil {
 					reader = encReader
@@ -258,7 +261,9 @@ func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
 		// Size = 12 byte nonce + plaintext + (16 byte GCM tag per 64KB chunk)
 		encryptedSize := calculateEncryptedSize(fi.Size())
 		w.Header().Set("Content-Length", fmt.Sprintf("%d", encryptedSize))
-		_, _ = io.Copy(writer, reader)
+
+		ctxWriter := &contextWriter{w: writer, ctx: r.Context()}
+		_, _ = io.Copy(ctxWriter, reader)
 		return
 	}
 
@@ -273,7 +278,8 @@ func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	_, _ = io.Copy(writer, reader)
+	ctxWriter := &contextWriter{w: writer, ctx: r.Context()}
+	_, _ = io.Copy(ctxWriter, reader)
 
 	// Record metrics after successful download
 	duration := time.Since(startTime).Seconds()

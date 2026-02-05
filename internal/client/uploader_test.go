@@ -196,7 +196,7 @@ func TestUploadSessionCancel(t *testing.T) {
 		RetryAttempts: 0,
 	}
 
-	session, err := NewUploadSession(server.URL, testFile, config)
+	session, err := NewUploadSession(server.URL, testFile, config, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("Failed to create session: %v", err)
 	}

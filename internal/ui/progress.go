@@ -60,8 +60,8 @@ func (p *ProgressReader) Read(b []byte) (int, error) {
 		}
 
 		// Format sizes with smarter units
-		currentSize := formatSize(p.Current)
-		totalSize := formatSize(p.Total)
+		currentSize := FormatBytes(p.Current)
+		totalSize := FormatBytes(p.Total)
 		elapsedStr := FormatDuration(elapsed)
 
 		// Format progress bar with detailed information
@@ -89,23 +89,4 @@ func bar(pct float64) string {
 		filled = protocol.ProgressBarWidth
 	}
 	return progressBars[filled]
-}
-
-// formatSize formats bytes into a human-readable string with appropriate units
-func formatSize(bytes int64) string {
-	const unit = 1024
-	if bytes < unit {
-		return fmt.Sprintf("%d B", bytes)
-	}
-
-	div := int64(unit)
-	exp := 0
-	units := []string{"KB", "MB", "GB", "TB"}
-
-	for bytes >= div*unit && exp < len(units)-1 {
-		div *= unit
-		exp++
-	}
-
-	return fmt.Sprintf("%.1f %s", float64(bytes)/float64(div), units[exp])
 }

@@ -1,0 +1,994 @@
+/* ==========================================================================
+   Warp Web UI - TUI-Consistent Theme
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   CSS Custom Properties (TUI Color Palette)
+   -------------------------------------------------------------------------- */
+:root {
+  /* Primary Colors - matching TUI styles.go */
+  --primary: #ffb86c; /* Amber/Orange - main accent, text, borders */
+  --accent: #ff5555; /* Red/Pink - errors, emphasis, cancel actions */
+  --success: #50fa7b; /* Bright Green - success states, connected */
+  --dim: #808080; /* Muted gray - secondary text, hints */
+  --bg: #000000; /* Pure Black - background */
+  --selected: #6cb3ff; /* Blue - selected/highlighted items */
+  --highlight-bg: #44475a; /* Dark Gray - code backgrounds, hover states */
+
+  /* Semantic aliases */
+  --text: var(--primary);
+  --border: var(--primary);
+  --error: var(--accent);
+  --warning: var(--primary);
+
+  /* Typography */
+  --font-mono: "Courier New", Courier, "Lucida Console", Monaco, monospace;
+
+  /* Spacing */
+  --spacing-xs: 0.25rem;
+  --spacing-sm: 0.5rem;
+  --spacing-md: 1rem;
+  --spacing-lg: 1.5rem;
+  --spacing-xl: 2rem;
+
+  /* Layout */
+  --content-max-width: 600px;
+  --header-height: auto;
+  --footer-height: auto;
+}
+
+/* --------------------------------------------------------------------------
+   Reset and Base Styles
+   -------------------------------------------------------------------------- */
+*,
+*::before,
+*::after {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html {
+  font-size: 16px;
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  font-family: var(--font-mono);
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+  line-height: 1.4;
+  display: flex;
+  flex-direction: column;
+}
+
+/* --------------------------------------------------------------------------
+   ASCII Border System - Using actual text characters
+   -------------------------------------------------------------------------- */
+/* Top border line */
+.ascii-box-top {
+  position: absolute;
+  top: 0;
+  left: 1ch;
+  right: 1ch;
+  height: 1em;
+  overflow: hidden;
+  white-space: nowrap;
+  color: var(--border);
+  font-family: var(--font-mono);
+  line-height: 1;
+  pointer-events: none;
+  z-index: 10;
+}
+
+.ascii-box-top::before {
+  content: "--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------";
+  display: block;
+}
+
+/* Bottom border line */
+.ascii-box-bottom {
+  position: absolute;
+  bottom: 0;
+  left: 1ch;
+  right: 1ch;
+  height: 1em;
+  overflow: hidden;
+  white-space: nowrap;
+  color: var(--border);
+  font-family: var(--font-mono);
+  line-height: 1;
+  pointer-events: none;
+  z-index: 10;
+}
+
+.ascii-box-bottom::before {
+  content: "--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------";
+  display: block;
+}
+
+/* Left border line */
+.ascii-box-left {
+  position: absolute;
+  top: 1em;
+  bottom: 1em;
+  left: 0;
+  width: 1ch;
+  color: var(--border);
+  font-family: var(--font-mono);
+  line-height: 1em;
+  pointer-events: none;
+  z-index: 10;
+  overflow: hidden;
+}
+
+.ascii-box-left::before {
+  content: "|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A";
+  white-space: pre;
+  display: block;
+}
+
+/* Right border line */
+.ascii-box-right {
+  position: absolute;
+  top: 1em;
+  bottom: 1em;
+  right: 0;
+  width: 1ch;
+  color: var(--border);
+  font-family: var(--font-mono);
+  line-height: 1em;
+  pointer-events: none;
+  z-index: 10;
+  overflow: hidden;
+}
+
+.ascii-box-right::before {
+  content: "|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A|\A";
+  white-space: pre;
+  display: block;
+}
+
+/* Corners */
+.box-corner {
+  position: absolute;
+  color: var(--border);
+  font-size: 1rem;
+  line-height: 1;
+  background: var(--bg);
+  font-family: var(--font-mono);
+  z-index: 11;
+  pointer-events: none;
+}
+
+.box-corner-tl {
+  top: 0;
+  left: 0;
+}
+
+.box-corner-tr {
+  top: 0;
+  right: 0;
+}
+
+.box-corner-bl {
+  bottom: 0;
+  left: 0;
+}
+
+.box-corner-br {
+  bottom: 0;
+  right: 0;
+}
+
+/* --------------------------------------------------------------------------
+   Typography
+   -------------------------------------------------------------------------- */
+.text-primary {
+  color: var(--primary);
+}
+.text-accent {
+  color: var(--accent);
+}
+.text-success {
+  color: var(--success);
+}
+.text-dim {
+  color: var(--dim);
+}
+.text-selected {
+  color: var(--selected);
+}
+.text-error {
+  color: var(--error);
+}
+
+.text-bold {
+  font-weight: bold;
+}
+.text-center {
+  text-align: center;
+}
+.text-left {
+  text-align: left;
+}
+.text-right {
+  text-align: right;
+}
+
+.text-sm {
+  font-size: 0.75rem;
+}
+.text-md {
+  font-size: 0.85rem;
+}
+.text-lg {
+  font-size: 1rem;
+}
+
+/* --------------------------------------------------------------------------
+   Layout - Page Container (for fixed header/footer)
+   -------------------------------------------------------------------------- */
+.page {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+/* --------------------------------------------------------------------------
+   Layout - Header (Fixed positioning)
+   -------------------------------------------------------------------------- */
+.header {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 100;
+  padding: calc(var(--spacing-sm) + 1em) calc(var(--spacing-md) + 1ch);
+  background: var(--bg);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.header-left {
+  display: flex;
+  align-items: center;
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+}
+
+.header-title {
+  color: var(--primary);
+  font-weight: bold;
+  font-size: 1rem;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.header-separator {
+  color: var(--dim);
+  margin: 0 var(--spacing-xs);
+}
+
+.header-status {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  font-size: 0.75rem;
+  color: var(--dim);
+}
+
+.header-ip {
+  font-size: 0.75rem;
+  color: var(--dim);
+}
+
+/* --------------------------------------------------------------------------
+   Layout - Footer (Fixed positioning)
+   -------------------------------------------------------------------------- */
+.footer {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 100;
+  padding: calc(var(--spacing-sm) + 1em) calc(var(--spacing-md) + 1ch);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  color: var(--dim);
+  background: var(--bg);
+}
+
+/* Non-fixed footer variant */
+.footer.static {
+  position: static;
+}
+
+.footer-shortcuts {
+  display: flex;
+  gap: var(--spacing-md);
+  font-size: 0.75rem;
+}
+
+.footer-shortcut {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+}
+
+.footer-shortcut kbd {
+  background: var(--highlight-bg);
+  color: var(--primary);
+  padding: 0 var(--spacing-xs);
+  border-radius: 2px;
+  font-family: inherit;
+  font-size: inherit;
+}
+
+.footer-status {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  font-size: 0.75rem;
+}
+
+/* --------------------------------------------------------------------------
+   Layout - Main Content (with fixed header/footer spacing)
+   -------------------------------------------------------------------------- */
+.main {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--spacing-md);
+  /* Account for fixed header and footer */
+  margin-top: 50px;
+  margin-bottom: 50px;
+  position: relative;
+}
+
+.main > .ascii-box-left,
+.main > .ascii-box-right {
+  position: fixed;
+  top: 50px;
+  bottom: 50px;
+  z-index: 99;
+}
+
+/* When using static header/footer */
+.main.no-fixed {
+  margin-top: 0;
+  margin-bottom: 0;
+}
+
+.content {
+  width: 100%;
+  max-width: var(--content-max-width);
+}
+
+/* Centered content box with TUI-like border */
+.content-box {
+  position: relative;
+  padding: calc(var(--spacing-md) + 1em) calc(var(--spacing-md) + 1ch);
+  background: var(--bg);
+}
+
+.content-box::before {
+  content: "+";
+  position: absolute;
+  top: -1px;
+  left: -1px;
+  color: var(--border);
+  font-size: 1rem;
+  line-height: 1;
+  background: var(--bg);
+  z-index: 1;
+}
+
+.content-box::after {
+  content: "+";
+  position: absolute;
+  top: -1px;
+  right: -1px;
+  color: var(--border);
+  font-size: 1rem;
+  line-height: 1;
+  background: var(--bg);
+  z-index: 1;
+}
+
+/* --------------------------------------------------------------------------
+   Connection Status Indicator
+   -------------------------------------------------------------------------- */
+.status-indicator {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--dim);
+  transition:
+    background 0.3s,
+    box-shadow 0.3s;
+}
+
+.status-indicator.connected {
+  background: var(--success);
+  box-shadow: 0 0 8px var(--success);
+}
+
+.status-indicator.disconnected {
+  background: var(--dim);
+}
+
+.status-indicator.reconnecting {
+  background: var(--primary);
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+.status-indicator.error {
+  background: var(--error);
+}
+
+/* Status dot (used in header) */
+.status-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--dim);
+  transition:
+    background 0.3s,
+    box-shadow 0.3s;
+}
+
+.status-dot.connected {
+  background: var(--success);
+  box-shadow: 0 0 8px var(--success);
+}
+
+.status-dot.disconnected {
+  background: var(--dim);
+}
+
+.status-dot.reconnecting {
+  background: var(--primary);
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+.status-dot.paused {
+  background: var(--primary);
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   Blinking Cursor
+   -------------------------------------------------------------------------- */
+.cursor::after {
+  content: "█";
+  animation: blink 1s step-end infinite;
+  color: var(--success);
+  margin-left: 4px;
+}
+
+@keyframes blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   Buttons
+   -------------------------------------------------------------------------- */
+.btn {
+  background: transparent;
+  color: var(--success);
+  border: 1px solid var(--success);
+  padding: var(--spacing-md);
+  font-family: inherit;
+  font-size: 1rem;
+  cursor: pointer;
+  text-transform: uppercase;
+  font-weight: bold;
+  letter-spacing: 1px;
+  width: 100%;
+  transition:
+    background 0.1s,
+    color 0.1s;
+}
+
+.btn:hover:not(:disabled) {
+  background: var(--success);
+  color: var(--bg);
+}
+
+.btn:disabled {
+  border-color: var(--dim);
+  color: var(--dim);
+  cursor: not-allowed;
+}
+
+.btn-sm {
+  padding: var(--spacing-xs) var(--spacing-sm);
+  font-size: 0.85rem;
+  width: auto;
+}
+
+.btn-icon {
+  background: none;
+  border: none;
+  color: var(--primary);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 1rem;
+  padding: 0;
+}
+
+.btn-icon:hover:not(:disabled) {
+  background: var(--primary);
+  color: var(--bg);
+}
+
+.btn-icon:disabled {
+  color: var(--dim);
+  cursor: not-allowed;
+}
+
+.btn-danger {
+  color: var(--error);
+  border-color: var(--error);
+}
+
+.btn-danger:hover:not(:disabled) {
+  background: var(--error);
+  color: var(--bg);
+}
+
+/* --------------------------------------------------------------------------
+   Progress Bar
+   -------------------------------------------------------------------------- */
+.progress-container {
+  width: 100%;
+  height: 12px;
+  background: var(--dim);
+  position: relative;
+}
+
+.progress-bar {
+  height: 100%;
+  background: var(--success);
+  width: 0%;
+  transition: width 0.2s linear;
+}
+
+.progress-bar.paused {
+  background: var(--primary);
+}
+
+.progress-bar.error {
+  background: var(--error);
+}
+
+/* --------------------------------------------------------------------------
+   Upload Zone
+   -------------------------------------------------------------------------- */
+.upload-zone {
+  border: 1px solid var(--dim);
+  padding: var(--spacing-xl) var(--spacing-md);
+  text-align: center;
+  cursor: pointer;
+  position: relative;
+  transition:
+    border-color 0.1s,
+    background 0.1s;
+  margin-bottom: var(--spacing-lg);
+}
+
+.upload-zone::before {
+  content: "+";
+  position: absolute;
+  top: -1px;
+  left: -1px;
+  color: var(--dim);
+  font-size: 1rem;
+  line-height: 1;
+  background: var(--bg);
+  z-index: 2;
+  font-family: var(--font-mono);
+}
+
+.upload-zone::after {
+  content: "+";
+  position: absolute;
+  top: -1px;
+  right: -1px;
+  color: var(--dim);
+  font-size: 1rem;
+  line-height: 1;
+  background: var(--bg);
+  z-index: 2;
+  font-family: var(--font-mono);
+}
+
+.upload-zone:hover,
+.upload-zone.drag-over {
+  border-color: var(--success);
+  background: rgba(80, 250, 123, 0.05);
+}
+
+.upload-zone:hover::before,
+.upload-zone:hover::after,
+.upload-zone.drag-over::before,
+.upload-zone.drag-over::after {
+  color: var(--success);
+}
+
+.upload-zone.drag-over .upload-text {
+  display: none;
+}
+
+.upload-zone.drag-over .upload-icon {
+  display: none;
+}
+
+.upload-zone.drag-over .upload-hint {
+  display: none;
+}
+
+.upload-icon {
+  display: block;
+  color: var(--dim);
+  margin-bottom: var(--spacing-md);
+  white-space: pre;
+  font-size: 0.7rem;
+  line-height: 1;
+  font-weight: bold;
+}
+
+.upload-text {
+  display: block;
+  color: var(--text);
+  font-size: 0.9rem;
+  font-weight: bold;
+}
+
+.upload-hint {
+  display: block;
+  color: var(--dim);
+  font-size: 0.75rem;
+  margin-top: var(--spacing-sm);
+}
+
+/* --------------------------------------------------------------------------
+   File List / Queue
+   -------------------------------------------------------------------------- */
+.file-list {
+  margin-bottom: var(--spacing-lg);
+  border-top: 1px solid var(--dim);
+  padding-top: var(--spacing-md);
+}
+
+.file-list:empty {
+  display: none;
+}
+
+.file-item {
+  display: flex;
+  flex-direction: column;
+  margin-bottom: var(--spacing-md);
+  font-size: 0.85rem;
+}
+
+.file-header {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  margin-bottom: var(--spacing-xs);
+}
+
+.file-name {
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+  min-width: 0;
+}
+
+.file-name::before {
+  content: "./";
+  color: var(--dim);
+}
+
+.file-size {
+  color: var(--dim);
+  flex-shrink: 0;
+}
+
+.file-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  flex-shrink: 0;
+}
+
+.file-status {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: var(--spacing-xs);
+  font-size: 0.75rem;
+}
+
+.file-speed {
+  color: var(--primary);
+}
+
+.file-progress-text {
+  color: var(--success);
+}
+
+.file-progress-text.paused {
+  color: var(--primary);
+}
+
+.file-progress-text.error {
+  color: var(--error);
+}
+
+.file-error {
+  color: var(--error);
+  font-size: 0.75rem;
+}
+
+/* Retry button styling */
+.btn-retry {
+  color: var(--primary);
+}
+
+.btn-retry:hover:not(:disabled) {
+  color: var(--success);
+}
+
+/* --------------------------------------------------------------------------
+   Empty State
+   -------------------------------------------------------------------------- */
+.empty-state {
+  text-align: center;
+  padding: var(--spacing-xl);
+  color: var(--dim);
+}
+
+.empty-state-icon {
+  font-size: 2rem;
+  margin-bottom: var(--spacing-md);
+}
+
+.empty-state-text {
+  font-size: 0.85rem;
+}
+
+/* --------------------------------------------------------------------------
+   Notifications / Messages
+   -------------------------------------------------------------------------- */
+.notification-container {
+  position: fixed;
+  top: 60px;
+  right: var(--spacing-md);
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+  max-width: 300px;
+}
+
+.notification {
+  padding: var(--spacing-sm) var(--spacing-md);
+  border: 1px solid var(--border);
+  background: var(--bg);
+  animation: slideIn 0.3s ease-out;
+}
+
+.notification.fade-out {
+  animation: fadeOut 0.3s ease-out forwards;
+}
+
+.notification-info {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+.notification-success {
+  border-color: var(--success);
+  color: var(--success);
+}
+
+.notification-error {
+  border-color: var(--error);
+  color: var(--error);
+}
+
+.notification-warning {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+@keyframes slideIn {
+  from {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+@keyframes fadeOut {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   Responsive Breakpoints
+   -------------------------------------------------------------------------- */
+@media (max-width: 768px) {
+  :root {
+    --content-max-width: 100%;
+  }
+
+  html {
+    font-size: 14px;
+  }
+
+  .header {
+    padding: calc(var(--spacing-sm) + 1em) var(--spacing-sm);
+    flex-direction: row;
+    justify-content: space-between;
+  }
+
+  .header-left {
+    flex: 0 0 auto;
+  }
+
+  .header-right {
+    flex: 0 0 auto;
+  }
+
+  /* Hide connection status text on small screens, keep dot */
+  #connection-text {
+    display: none;
+  }
+
+  .footer {
+    flex-direction: row;
+    justify-content: space-between;
+    padding: calc(var(--spacing-sm) + 1em) var(--spacing-sm);
+    text-align: left;
+  }
+
+  .footer-shortcuts {
+    display: none; /* Hide shortcuts on mobile to save space */
+  }
+
+  .main {
+    padding: var(--spacing-sm);
+    /* Match desktop/base height approximately */
+    margin-top: 50px;
+    margin-bottom: 50px;
+  }
+
+  .main > .ascii-box-left,
+  .main > .ascii-box-right {
+    /* Match the margin values to connect lines */
+    top: 50px;
+    bottom: 50px;
+  }
+
+  .upload-zone {
+    padding: var(--spacing-lg) var(--spacing-sm);
+  }
+
+  .file-header {
+    flex-wrap: wrap;
+  }
+
+  .file-name {
+    width: 100%;
+    margin-bottom: var(--spacing-xs);
+  }
+}
+
+@media (max-width: 480px) {
+  html {
+    font-size: 13px;
+  }
+
+  .main {
+    /* Further increase margins for smallest screens */
+    margin-top: 100px;
+    margin-bottom: 90px;
+  }
+
+  .main > .ascii-box-left,
+  .main > .ascii-box-right {
+    top: 100px;
+    bottom: 90px;
+  }
+
+  .footer-shortcuts {
+    font-size: 0.7rem;
+  }
+
+  .btn {
+    padding: var(--spacing-sm);
+    font-size: 0.9rem;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   Utility Classes
+   -------------------------------------------------------------------------- */
+.hidden {
+  display: none !important;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.mt-sm {
+  margin-top: var(--spacing-sm);
+}
+.mt-md {
+  margin-top: var(--spacing-md);
+}
+.mt-lg {
+  margin-top: var(--spacing-lg);
+}
+.mb-sm {
+  margin-bottom: var(--spacing-sm);
+}
+.mb-md {
+  margin-bottom: var(--spacing-md);
+}
+.mb-lg {
+  margin-bottom: var(--spacing-lg);
+}
+
+.p-sm {
+  padding: var(--spacing-sm);
+}
+.p-md {
+  padding: var(--spacing-md);
+}
+.p-lg {
+  padding: var(--spacing-lg);
+}

@@ -112,3 +112,7 @@ __debug_bin
 .fseventsd
 .Spotlight-V100
 .Trashes
+
+# Tasks
+tasks/
+GEMINI.md

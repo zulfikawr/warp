@@ -3,6 +3,7 @@ package protocol
 import (
 	"fmt"
 	"path/filepath"
+	"strings"
 )
 
 // TransferType indicates the type of content being transferred
@@ -91,13 +92,19 @@ func (m *Metadata) IsCompressible() bool {
 	if m.Type != TransferTypeFile {
 		return false
 	}
+	return IsCompressible(m.Name)
+}
 
-	ext := filepath.Ext(m.Name)
+// IsCompressible checks if the file extension indicates compressible content.
+// This is a standalone utility function used across the codebase.
+func IsCompressible(name string) bool {
+	ext := strings.ToLower(filepath.Ext(name))
 	compressibleExts := map[string]bool{
 		".txt": true, ".json": true, ".xml": true, ".html": true,
 		".css": true, ".js": true, ".csv": true, ".log": true,
 		".md": true, ".yaml": true, ".yml": true, ".svg": true,
 		".sql": true, ".sh": true, ".bat": true, ".ps1": true,
+		".toml": true, ".htm": true,
 	}
 
 	return compressibleExts[ext]

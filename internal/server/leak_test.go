@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"os"
 	"runtime"
 	"testing"
@@ -22,12 +23,12 @@ func TestServer_NoGoroutineLeaks(t *testing.T) {
 
 	// Create and start server
 	srv := &Server{
-		Token:     "test-token",
+		Code:      "test-code",
 		HostMode:  true,
 		UploadDir: t.TempDir(),
 	}
 
-	url, err := srv.Start()
+	url, err := srv.Start(context.Background())
 	if err != nil {
 		t.Fatalf("Failed to start server: %v", err)
 	}
@@ -70,12 +71,12 @@ func TestServer_MultipleStartShutdown(t *testing.T) {
 	// Run 3 cycles
 	for i := 0; i < 3; i++ {
 		srv := &Server{
-			Token:     "test-token",
+			Code:      "test-code",
 			HostMode:  true,
 			UploadDir: t.TempDir(),
 		}
 
-		_, err := srv.Start()
+		_, err := srv.Start(context.Background())
 		if err != nil {
 			t.Fatalf("Cycle %d: Failed to start: %v", i, err)
 		}
@@ -103,14 +104,15 @@ func TestServer_MultipleStartShutdown(t *testing.T) {
 // TestRateLimiterCleanup verifies rate limiters are cleaned up
 func TestRateLimiterCleanup(t *testing.T) {
 	srv := &Server{
-		Token:         "test-token",
+		Code:          "test-code",
 		RateLimitMbps: 10,
 	}
+	srv.RateLimitMgr = NewRateLimitManager(10)
 
 	// Create rate limiters for multiple IPs
 	ips := []string{"192.168.1.1", "192.168.1.2", "192.168.1.3"}
 	for _, ip := range ips {
-		lim := srv.getRateLimiter(ip)
+		lim := srv.RateLimitMgr.GetRateLimiter(ip)
 		if lim == nil {
 			t.Errorf("Failed to create rate limiter for %s", ip)
 		}
@@ -118,7 +120,7 @@ func TestRateLimiterCleanup(t *testing.T) {
 
 	// Verify they exist
 	count := 0
-	srv.rateLimiters.Range(func(key, value interface{}) bool {
+	srv.RateLimitMgr.rateLimiters.Range(func(key, value interface{}) bool {
 		count++
 		return true
 	})
@@ -127,18 +129,18 @@ func TestRateLimiterCleanup(t *testing.T) {
 	}
 
 	// Manually set lastAccess to old time to trigger cleanup
-	srv.rateLimiters.Range(func(key, value interface{}) bool {
+	srv.RateLimitMgr.rateLimiters.Range(func(key, value interface{}) bool {
 		entry := value.(*rateLimiterEntry)
 		entry.lastAccess = time.Now().Add(-2 * time.Hour)
 		return true
 	})
 
 	// Run cleanup
-	srv.cleanupRateLimiters()
+	srv.RateLimitMgr.CleanupRateLimiters()
 
 	// Verify they're cleaned up
 	count = 0
-	srv.rateLimiters.Range(func(key, value interface{}) bool {
+	srv.RateLimitMgr.rateLimiters.Range(func(key, value interface{}) bool {
 		count++
 		return true
 	})

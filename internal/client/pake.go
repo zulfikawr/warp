@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/zulfikawr/warp/internal/crypto"
 	"github.com/zulfikawr/warp/internal/protocol"
@@ -24,12 +25,14 @@ type pakeVerifyRequest struct {
 
 type pakeVerifyResponse struct {
 	Confirmation []byte `json:"confirmation"`
-	Token        string `json:"token"`
+	Code         string `json:"code"`
 }
 
 // PerformPAKEHandshake performs the PAKE handshake with the server at baseURL.
-// Returns the shared key and the download token.
+// Returns the shared key and the download code.
 func (d *Downloader) PerformPAKEHandshake(baseURL string, code string) ([]byte, string, error) {
+	// Normalize base URL to avoid double slashes when joining paths
+	baseURL = strings.TrimRight(baseURL, "/")
 	// 1. Initialize PAKE
 	// Client is Role 0
 	state, err := crypto.InitializePAKE(code, false)
@@ -91,5 +94,5 @@ func (d *Downloader) PerformPAKEHandshake(baseURL string, code string) ([]byte, 
 		return nil, "", fmt.Errorf("server PAKE confirmation failed: %w", err)
 	}
 
-	return key, verifyResp.Token, nil
+	return key, verifyResp.Code, nil
 }

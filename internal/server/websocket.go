@@ -1,10 +1,11 @@
 package server
 
 import (
-	"github.com/zulfikawr/warp/internal/logging"
-	"go.uber.org/zap"
 	"net/http"
 	"time"
+
+	"github.com/zulfikawr/warp/internal/logging"
+	"go.uber.org/zap"
 
 	"github.com/gorilla/websocket"
 	"github.com/zulfikawr/warp/internal/metrics"
@@ -15,13 +16,20 @@ var wsUpgrader = websocket.Upgrader{
 	ReadBufferSize:  WebSocketReadBuffer,
 	WriteBufferSize: WebSocketWriteBuffer,
 	CheckOrigin: func(r *http.Request) bool {
-		// Allow connections from same origin only for security
+		// Allow non-browser clients (no Origin header)
 		origin := r.Header.Get("Origin")
 		if origin == "" {
-			return true // Allow non-browser clients
+			return true
 		}
-		// In production, validate origin properly
-		return true
+
+		// Parse the Origin header
+		_, err := http.NewRequest("GET", origin, nil)
+		if err != nil {
+			return false
+		}
+
+		// Ensure the origin matches the request host
+		return r.Header.Get("Origin") == "http://"+r.Host || r.Header.Get("Origin") == "https://"+r.Host
 	},
 }
 
@@ -46,7 +54,7 @@ func (s *Server) handleProgressWebSocket(w http.ResponseWriter, r *http.Request)
 		case <-ticker.C:
 			// Collect all active uploads/downloads
 			progress := make([]map[string]interface{}, 0)
-			s.activeUploads.Range(func(key, value interface{}) bool {
+			s.SessionMgr.RangeActiveUploads(func(key, value interface{}) bool {
 				tracker := value.(*ProgressTracker)
 				progress = append(progress, tracker.GetProgress())
 				return true

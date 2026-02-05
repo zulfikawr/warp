@@ -2,23 +2,10 @@ package crypto
 
 import (
 	"crypto/rand"
-	"encoding/hex"
 	"fmt"
 	"io"
 	"math/big"
 )
-
-// GenerateToken returns a secure 32-byte hex string token.
-func GenerateToken(randReader io.Reader) (string, error) {
-	if randReader == nil {
-		randReader = rand.Reader
-	}
-	b := make([]byte, 32)
-	if _, err := io.ReadFull(randReader, b); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(b), nil
-}
 
 // GenerateCode returns a human-readable PAKE code in the format N-word-word.
 func GenerateCode(randReader io.Reader) (string, error) {

@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -35,13 +36,26 @@ func (rl *RateLimitedWriter) Write(p []byte) (int, error) {
 	return rl.w.Write(p)
 }
 
-// getRateLimiter gets or creates a rate limiter for a client IP
-func (s *Server) getRateLimiter(clientIP string) *rate.Limiter {
-	if s.RateLimitMbps <= 0 {
+// RateLimitManager handles bandwidth limiting for clients
+type RateLimitManager struct {
+	RateLimitMbps float64
+	rateLimiters  sync.Map // clientIP -> *rateLimiterEntry
+}
+
+// NewRateLimitManager creates a new RateLimitManager
+func NewRateLimitManager(rateLimitMbps float64) *RateLimitManager {
+	return &RateLimitManager{
+		RateLimitMbps: rateLimitMbps,
+	}
+}
+
+// GetRateLimiter gets or creates a rate limiter for a client IP
+func (m *RateLimitManager) GetRateLimiter(clientIP string) *rate.Limiter {
+	if m.RateLimitMbps <= 0 {
 		return nil // No rate limiting
 	}
 
-	if val, ok := s.rateLimiters.Load(clientIP); ok {
+	if val, ok := m.rateLimiters.Load(clientIP); ok {
 		entry := val.(*rateLimiterEntry)
 		// Update last access time
 		entry.lastAccess = time.Now()
@@ -49,7 +63,7 @@ func (s *Server) getRateLimiter(clientIP string) *rate.Limiter {
 	}
 
 	// Convert Mbps to bytes per second
-	bytesPerSecond := (s.RateLimitMbps * 1_000_000) / 8
+	bytesPerSecond := (m.RateLimitMbps * 1_000_000) / 8
 	burst := max(
 		// 100ms burst
 		int(bytesPerSecond/10),
@@ -64,18 +78,18 @@ func (s *Server) getRateLimiter(clientIP string) *rate.Limiter {
 		lastAccess: time.Now(),
 	}
 
-	s.rateLimiters.Store(clientIP, entry)
+	m.rateLimiters.Store(clientIP, entry)
 	return lim
 }
 
-// cleanupRateLimiters removes stale rate limiters to prevent memory leak
-func (s *Server) cleanupRateLimiters() {
+// CleanupRateLimiters removes stale rate limiters to prevent memory leak
+func (m *RateLimitManager) CleanupRateLimiters() {
 	staleThreshold := time.Now().Add(-1 * time.Hour)
 
-	s.rateLimiters.Range(func(key, value interface{}) bool {
+	m.rateLimiters.Range(func(key, value interface{}) bool {
 		entry := value.(*rateLimiterEntry)
 		if entry.lastAccess.Before(staleThreshold) {
-			s.rateLimiters.Delete(key)
+			m.rateLimiters.Delete(key)
 		}
 		return true
 	})

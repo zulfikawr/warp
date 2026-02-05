@@ -137,24 +137,6 @@ Follow standard Go conventions:
 - Keep functions focused and concise
 - Add comments for exported functions and types
 
-### Code Organization
-
-```
-cmd/warp/          - CLI entry point
-internal/          - Internal packages
-  client/          - Download client implementation
-  server/          - HTTP server and handlers
-  crypto/          - Encryption functionality
-  discovery/       - mDNS/DNS-SD discovery
-  network/         - Network utilities
-  protocol/        - Protocol handshake
-  ui/              - Terminal UI components
-  config/          - Configuration management
-  metrics/         - Prometheus metrics
-  logging/         - Structured logging
-test/              - End-to-end tests
-```
-
 ### Testing Requirements
 
 - Write unit tests for new functions
@@ -220,17 +202,6 @@ Provide:
 - Use case and motivation
 - Proposed implementation approach (optional)
 - Alternatives considered
-
-## Project Structure
-
-### Key Components
-
-- **Server** - HTTP server with upload/download handlers
-- **Client** - Download client with parallel chunk support
-- **Discovery** - mDNS/DNS-SD for local network discovery
-- **Crypto** - AES-256-GCM encryption with PBKDF2
-- **Metrics** - Prometheus metrics export
-- **UI** - Terminal progress bars and QR codes
 
 ### Adding New Features
 

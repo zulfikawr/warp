@@ -1,3 +1,5 @@
+// Package main is the entry point for the warp application.
+// It handles command-line argument parsing and routes to either CLI or TUI mode.
 package main
 
 import (
@@ -5,76 +7,105 @@ import (
 	"log"
 	"os"
 
-	"github.com/zulfikawr/warp/cmd/warp/commands"
-	"github.com/zulfikawr/warp/cmd/warp/completion"
-	"github.com/zulfikawr/warp/cmd/warp/ui"
-	"github.com/zulfikawr/warp/internal/errors"
+	"github.com/zulfikawr/warp/cmd/warp/cli"
+	"github.com/zulfikawr/warp/cmd/warp/help"
+	"github.com/zulfikawr/warp/cmd/warp/tui"
+	"github.com/zulfikawr/warp/internal/ui"
 )
-
-// filterGlobalFlags removes global flags that subcommands don't recognize
-func filterGlobalFlags(args []string) []string {
-	out := make([]string, 0, len(args))
-	for _, a := range args {
-		if a == "--no-color" {
-			continue
-		}
-		out = append(out, a)
-	}
-	return out
-}
 
 func main() {
 	log.SetFlags(0)
 
-	// Determine color usage from env and global flag
-	enableColors := os.Getenv("NO_COLOR") == ""
-	for _, a := range os.Args[1:] {
-		if a == "--no-color" {
-			enableColors = false
-			break
+	// Check for CLI mode flag first
+	isCLI := false
+	args := os.Args[1:]
+	filteredArgs := make([]string, 0, len(args))
+	for _, arg := range args {
+		if arg == "--cli" {
+			isCLI = true
+		} else {
+			filteredArgs = append(filteredArgs, arg)
 		}
 	}
-	ui.SetColorsEnabled(enableColors)
 
-	if len(os.Args) < 2 {
-		ui.PrintUsage()
-		os.Exit(2)
+	// Launch TUI home screen if no arguments provided and not CLI mode
+	if len(filteredArgs) == 0 && !isCLI {
+		tui.RunApp(tui.NewApp())
+		return
+	}
+
+	if len(filteredArgs) == 0 {
+		fmt.Println("Usage: warp [--cli] <command> [args...]")
+		return
 	}
 
 	var err error
-	sub := os.Args[1]
-	switch sub {
-	case "send":
-		err = commands.Send(filterGlobalFlags(os.Args[2:]))
-	case "host":
-		err = commands.Host(filterGlobalFlags(os.Args[2:]))
-	case "receive":
-		err = commands.Receive(filterGlobalFlags(os.Args[2:]))
-	case "search":
-		err = commands.Search(filterGlobalFlags(os.Args[2:]))
-	case "config":
-		err = commands.Config(filterGlobalFlags(os.Args[2:]))
-	case "speedtest":
-		err = commands.Speedtest(filterGlobalFlags(os.Args[2:]))
-	case "completion":
-		err = completion.Generate(filterGlobalFlags(os.Args[2:]))
-	case "-h", "--help":
-		ui.PrintUsage()
+	sub := filteredArgs[0]
+	subArgs := filteredArgs[1:]
+
+	if isCLI {
+		if err := runCLICommand(sub, subArgs); err != nil {
+			fmt.Printf("Error: %v\n", err)
+			os.Exit(1)
+		}
 		return
-	default:
-		ui.PrintUsage()
-		os.Exit(2)
 	}
 
-	// Handle errors in one place
+	switch sub {
+	case "send":
+		tui.HandleSend(subArgs)
+	case "host":
+		tui.HandleHost(subArgs)
+	case "receive":
+		tui.HandleReceive(subArgs)
+	case "search":
+		tui.HandleSearch(subArgs)
+	case "help":
+		help.PrintRoot()
+	case "config":
+		tui.HandleConfig(subArgs)
+	case "history":
+		tui.HandleHistory(subArgs)
+	case "resume":
+		tui.HandleResume(subArgs)
+	case "version":
+		cli.Version()
+		return
+	default:
+		// Attempt to interpret as a file path shortcut for send
+		err = tui.HandleDefault(sub)
+	}
+
 	if err != nil {
-		// Format user-friendly errors nicely
-		if errors.IsUserError(err) {
-			fmt.Fprintf(os.Stderr, "%s%s%s\n", ui.C.Red, err.Error(), ui.C.Reset)
-		} else {
-			// For non-user errors, just show the error
-			fmt.Fprintf(os.Stderr, "%sError: %v%s\n", ui.C.Red, err, ui.C.Reset)
-		}
+		fmt.Fprintf(os.Stderr, "%sError: %v%s\n", ui.Colors.Red, err, ui.Colors.Reset)
 		os.Exit(1)
+	}
+}
+
+// runCLICommand executes a command in CLI mode (text-only output).
+func runCLICommand(cmd string, args []string) error {
+	switch cmd {
+	case "send":
+		return cli.Send(args)
+	case "receive":
+		return cli.Receive(args)
+	case "host":
+		return cli.Host(args)
+	case "search":
+		return cli.Search(args)
+	case "history":
+		return cli.History(args)
+	case "resume":
+		return cli.Resume(args)
+	case "version":
+		cli.Version()
+		return nil
+	case "config":
+		return cli.Config(args)
+	case "help":
+		help.PrintRoot()
+		return nil
+	default:
+		return fmt.Errorf("command '%s' not implemented in CLI mode yet", cmd)
 	}
 }

@@ -36,20 +36,39 @@ var (
 	)
 
 	// RateLimitedRequests counts requests that exceeded rate limits.
-	// Labels: client_ip
-	// Use this to identify abusive clients and tune rate limiting.
+	// Labels: limit_type (bandwidth, requests)
+	// Use this to track rate limiting effectiveness.
 	RateLimitedRequests = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "warp_rate_limited_requests_total",
 			Help: "Total number of rate limited requests",
 		},
-		[]string{"client_ip"},
+		[]string{"limit_type"},
+	)
+
+	// RateLimitedClients tracks unique clients that have been rate limited.
+	// This is a gauge that can be reset periodically.
+	RateLimitedClients = promauto.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "warp_rate_limited_clients",
+			Help: "Number of unique clients currently rate limited",
+		},
 	)
 )
 
 // Helper functions for HTTP metrics
 
-// RecordRateLimit records a rate-limited request for a client IP.
-func RecordRateLimit(clientIP string) {
-	RateLimitedRequests.WithLabelValues(clientIP).Inc()
+// RecordRateLimit records a rate-limited request by type.
+func RecordRateLimit(limitType string) {
+	RateLimitedRequests.WithLabelValues(limitType).Inc()
+}
+
+// RecordBandwidthRateLimit records a bandwidth rate limit event.
+func RecordBandwidthRateLimit() {
+	RateLimitedRequests.WithLabelValues("bandwidth").Inc()
+}
+
+// RecordRequestRateLimit records a request rate limit event.
+func RecordRequestRateLimit() {
+	RateLimitedRequests.WithLabelValues("requests").Inc()
 }

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"io"
 	"net/http"
 	"os"
@@ -22,9 +23,9 @@ func TestServerValidAndInvalidToken(t *testing.T) {
 	_, _ = tmpFile.Write([]byte("hello"))
 	_ = tmpFile.Close()
 
-	tok, _ := crypto.GenerateToken(nil)
-	s := &Server{Token: tok, SrcPath: tmpFile.Name()}
-	url, err := s.Start()
+	code, _ := crypto.GenerateCode(nil)
+	s := &Server{Code: code, SrcPath: tmpFile.Name()}
+	url, err := s.Start(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,16 +59,18 @@ func TestServerHealthEndpoint(t *testing.T) {
 	}
 	defer func() { _ = os.Remove(tmpFile.Name()) }()
 
-	tok, _ := crypto.GenerateToken(nil)
-	s := &Server{Token: tok, SrcPath: tmpFile.Name()}
-	url, err := s.Start()
+	defer func() { _ = os.Remove(tmpFile.Name()) }()
+
+	code, _ := crypto.GenerateCode(nil)
+	s := &Server{Code: code, SrcPath: tmpFile.Name()}
+	url, err := s.Start(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer func() { _ = s.Shutdown() }()
 
 	// Extract base URL
-	baseURL := url[:len(url)-len(tok)-3] // Remove /d/{token}
+	baseURL := url[:len(url)-len(code)-3] // Remove /d/{code}
 
 	// Test health endpoint
 	resp, err := http.Get(baseURL + "/health")
@@ -88,16 +91,18 @@ func TestServerMetricsEndpoint(t *testing.T) {
 	}
 	defer func() { _ = os.Remove(tmpFile.Name()) }()
 
-	tok, _ := crypto.GenerateToken(nil)
-	s := &Server{Token: tok, SrcPath: tmpFile.Name()}
-	url, err := s.Start()
+	defer func() { _ = os.Remove(tmpFile.Name()) }()
+
+	code, _ := crypto.GenerateCode(nil)
+	s := &Server{Code: code, SrcPath: tmpFile.Name()}
+	url, err := s.Start(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer func() { _ = s.Shutdown() }()
 
 	// Extract base URL
-	baseURL := url[:len(url)-len(tok)-3]
+	baseURL := url[:len(url)-len(code)-3]
 
 	// Test metrics endpoint
 	resp, err := http.Get(baseURL + "/metrics")
@@ -121,14 +126,14 @@ func TestServerMetricsEndpoint(t *testing.T) {
 func TestHostMode(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	tok, _ := crypto.GenerateToken(nil)
+	code, _ := crypto.GenerateCode(nil)
 	s := &Server{
-		Token:     tok,
+		Code:      code,
 		HostMode:  true,
 		UploadDir: tmpDir,
 	}
 
-	url, err := s.Start()
+	url, err := s.Start(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -239,30 +244,6 @@ func TestGetOptimalBufferSize(t *testing.T) {
 		got := protocol.GetOptimalBufferSize(tt.fileSize)
 		if got != tt.wantSize {
 			t.Errorf("protocol.GetOptimalBufferSize(%d) = %d, want %d", tt.fileSize, got, tt.wantSize)
-		}
-	}
-}
-
-func TestIsCompressible(t *testing.T) {
-	tests := []struct {
-		path string
-		want bool
-	}{
-		{"file.txt", true},
-		{"file.json", true},
-		{"file.html", true},
-		{"file.xml", true},
-		{"file.csv", true},
-		{"file.jpg", false},
-		{"file.png", false},
-		{"file.mp4", false},
-		{"file.zip", false},
-	}
-
-	for _, tt := range tests {
-		got := isCompressible(tt.path)
-		if got != tt.want {
-			t.Errorf("isCompressible(%s) = %v, want %v", tt.path, got, tt.want)
 		}
 	}
 }

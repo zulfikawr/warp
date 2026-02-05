@@ -7,7 +7,6 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"io"
-	"os"
 
 	"golang.org/x/crypto/pbkdf2"
 )
@@ -134,17 +133,11 @@ func NewEncryptReader(reader io.Reader, key []byte) (*EncryptReader, error) {
 
 // Read implements io.Reader, encrypting data from the underlying reader
 func (er *EncryptReader) Read(p []byte) (int, error) {
-	if os.Getenv("WARP_DEBUG") != "" && er.chunkCount == 0 && er.phase == -1 {
-		fmt.Fprintf(os.Stderr, "[EncryptReader] First Read() call with buffer size %d\n", len(p))
-	}
 	// Phase -1: Send the nonce first
 	if er.phase == -1 {
 		if er.offset < len(er.buffer) {
 			n := copy(p, er.buffer[er.offset:])
 			er.offset += n
-			if os.Getenv("WARP_DEBUG") != "" && n > 0 {
-				fmt.Fprintf(os.Stderr, "[EncryptReader] Sending nonce: %d bytes, first 4 hex: %x\n", n, er.buffer[er.offset-n:er.offset])
-			}
 			if er.offset >= len(er.buffer) {
 				er.buffer = nil
 				er.offset = 0
@@ -165,9 +158,6 @@ func (er *EncryptReader) Read(p []byte) (int, error) {
 	if er.phase == 0 && er.lengthBuf != nil && er.lengthOff < len(er.lengthBuf) {
 		n := copy(p, er.lengthBuf[er.lengthOff:])
 		er.lengthOff += n
-		if os.Getenv("WARP_DEBUG") != "" {
-			fmt.Fprintf(os.Stderr, "[EncryptReader] Sending length prefix: %x (bytes %d-%d of 4)\n", er.lengthBuf, er.lengthOff-n, er.lengthOff)
-		}
 		if er.lengthOff >= len(er.lengthBuf) {
 			er.phase = 1 // Move to chunk data phase
 			er.chunkOff = 0
@@ -194,9 +184,6 @@ func (er *EncryptReader) Read(p []byte) (int, error) {
 		chunk := make([]byte, 64*1024) // 64KB chunks
 		n, err := er.reader.Read(chunk)
 		if n > 0 {
-			if os.Getenv("WARP_DEBUG") != "" {
-				fmt.Fprintf(os.Stderr, "[EncryptReader] Read %d bytes from plaintext, encrypting chunk #%d\n", n, er.chunkCount)
-			}
 			// Create a working copy of the nonce for this chunk
 			workingNonce := make([]byte, NonceSize)
 			copy(workingNonce, er.nonce)
@@ -223,10 +210,6 @@ func (er *EncryptReader) Read(p []byte) (int, error) {
 			er.lengthOff = 0
 			er.chunkOff = 0
 			er.phase = 0
-
-			if os.Getenv("WARP_DEBUG") != "" {
-				fmt.Fprintf(os.Stderr, "[EncryptReader] Encrypted chunk #%d: length prefix = %x (%d bytes total encrypted)\n", er.chunkCount-1, er.lengthBuf, len(encrypted))
-			}
 
 			// Now try to send some data in this same call
 			return er.Read(p)
@@ -293,8 +276,9 @@ func (dr *DecryptReader) Read(p []byte) (int, error) {
 		if _, err := io.ReadFull(dr.reader, dr.nonce); err != nil {
 			return 0, fmt.Errorf("failed to read nonce: %w", err)
 		}
-		if os.Getenv("WARP_DEBUG") != "" {
-			fmt.Fprintf(os.Stderr, "[DecryptReader] Read nonce: %x\n", dr.nonce)
+		// Validate nonce size
+		if len(dr.nonce) != NonceSize {
+			return 0, fmt.Errorf("invalid nonce size: expected %d, got %d", NonceSize, len(dr.nonce))
 		}
 		dr.first = false
 	}
@@ -344,9 +328,6 @@ func (dr *DecryptReader) Read(p []byte) (int, error) {
 		dr.chunkLen = (int(lengthBytes[0]) << 24) | (int(lengthBytes[1]) << 16) | (int(lengthBytes[2]) << 8) | int(lengthBytes[3])
 		dr.chunkBuf = make([]byte, dr.chunkLen)
 		dr.chunkOff = 0
-		if os.Getenv("WARP_DEBUG") != "" {
-			fmt.Fprintf(os.Stderr, "[DecryptReader] Read length prefix: %x -> chunk length = %d bytes (chunk #%d)\n", lengthBytes, dr.chunkLen, dr.chunkCount)
-		}
 	}
 
 	// Read the encrypted chunk data

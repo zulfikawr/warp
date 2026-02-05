@@ -1,11 +1,13 @@
 package client
 
 import (
-	"io"
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"testing"
+
+	"github.com/zulfikawr/warp/internal/progress"
 )
 
 func TestReceiveCreatesFile(t *testing.T) {
@@ -15,7 +17,7 @@ func TestReceiveCreatesFile(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	out, err := Receive(ts.URL, "", true, io.Discard, nil)
+	out, err := Receive(context.Background(), ts.URL, "", true, func(pi progress.Progress) {}, nil, nil)
 	if err != nil {
 		t.Fatalf("Receive error: %v", err)
 	}

@@ -5,13 +5,15 @@ import (
 	"net"
 	"testing"
 	"time"
+
+	"github.com/zulfikawr/warp/internal/protocol"
 )
 
 func TestAdvertiseAndBrowse(t *testing.T) {
 	ip := net.ParseIP("127.0.0.1")
 	port := 54321
 	token := "tokendiscovery"
-	path := "/d/" + token
+	path := protocol.PathPrefix + token
 
 	adv, err := Advertise("warp-test-"+token[:6], "send", token, path, ip, port)
 	if err != nil {
